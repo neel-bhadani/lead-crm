@@ -1,3 +1,89 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+/*
+ | Global control styles.
+ | Defined once so every input, select and textarea in the app matches —
+ | scoping them to a wrapper class is what makes modal forms look broken.
+ */
+@layer base {
+
+    input[type='text'],
+    input[type='email'],
+    input[type='tel'],
+    input[type='search'],
+    input[type='password'],
+    input[type='number'],
+    input[type='date'],
+    input[type='datetime-local'],
+    select,
+    textarea {
+        width: 100%;
+        min-height: 38px;
+        padding: 0.55rem 0.7rem;
+        border: 1px solid #e2e8f0;
+        border-radius: 0.5rem;
+        background-color: #fff;
+        font-size: 0.875rem;
+        line-height: 1.4;
+        color: #0f172a;
+    }
+
+    select {
+        appearance: none;
+        padding-right: 2rem;
+        cursor: pointer;
+        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 0.65rem center;
+        background-size: 1rem;
+    }
+
+    textarea {
+        resize: vertical;
+        min-height: 74px;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+        outline: none;
+        border-color: #0f766e;
+        box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.15);
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+        color: #94a3b8;
+    }
+}
+
+@layer components {
+
+    .btn {
+        @apply inline-flex items-center justify-center rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-60;
+    }
+
+    .btn-ghost {
+        @apply inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50;
+    }
+
+    .btn-danger {
+        @apply inline-flex items-center justify-center rounded-lg bg-rose-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-60;
+    }
+
+    .btn-xs {
+        @apply rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:border-teal-600 hover:text-teal-700;
+    }
+
+    .card {
+        @apply rounded-xl border border-slate-200 bg-white;
+    }
+
+    .info-box {
+        @apply rounded-lg border border-teal-200 bg-teal-50 px-3.5 py-3 text-xs leading-relaxed text-teal-900;
+    }
+
+    .warn-box {
+        @apply rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-900;
+    }
+}

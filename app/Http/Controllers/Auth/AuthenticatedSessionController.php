@@ -33,7 +33,8 @@ class AuthenticatedSessionController extends Controller
 
         $request->session()->regenerate();
 
-        return redirect()->intended(route('dashboard', absolute: false));
+        return redirect()->intended(route('dashboard', absolute: false))
+            ->with('success', 'Welcome back, ' . $request->user()->display_name . '.');
     }
 
     /**
@@ -47,6 +48,10 @@ class AuthenticatedSessionController extends Controller
 
         $request->session()->regenerateToken();
 
-        return redirect('/');
+        // straight to the login page, not '/': that route redirects on to
+        // /dashboard, and the extra hop would age the flash message out
+        // before the login page ever renders.
+        return redirect()->route('login')
+            ->with('success', 'You have been signed out.');
     }
 }

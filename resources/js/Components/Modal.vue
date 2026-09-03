@@ -1,123 +1,102 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { onMounted, onUnmounted, watch } from 'vue'
 
 const props = defineProps({
-    show: {
-        type: Boolean,
-        default: false,
-    },
-    maxWidth: {
-        type: String,
-        default: '2xl',
-    },
-    closeable: {
-        type: Boolean,
-        default: true,
-    },
-});
+  show: Boolean,
+  title: String,
+  maxWidth: { type: String, default: 'max-w-2xl' },
+})
+const emit = defineEmits(['close'])
 
-const emit = defineEmits(['close']);
-const dialog = ref();
-const showSlot = ref(props.show);
+const onKey = e => { if (e.key === 'Escape' && props.show) emit('close') }
 
-watch(
-    () => props.show,
-    () => {
-        if (props.show) {
-            document.body.style.overflow = 'hidden';
-            showSlot.value = true;
+/*
+ | Locking the page scroll takes the viewport scrollbar away, which makes the
+ | page wider: the header and cards slide sideways and every chart behind the
+ | modal redraws at the new width. Hand the same pixels back as padding so
+ | nothing moves. Measured before the modal renders, since the watcher flushes
+ | ahead of the DOM update, and zero on phones and overlay-scrollbar browsers
+ | where there is no gutter to give back.
+ */
+const lockScroll = () => {
+  const gutter = window.innerWidth - document.documentElement.clientWidth
 
-            dialog.value?.showModal();
-        } else {
-            document.body.style.overflow = '';
+  if (gutter > 0) document.body.style.paddingRight = `${gutter}px`
 
-            setTimeout(() => {
-                dialog.value?.close();
-                showSlot.value = false;
-            }, 200);
-        }
-    },
-);
+  document.body.style.overflow = 'hidden'
+}
 
-const close = () => {
-    if (props.closeable) {
-        emit('close');
-    }
-};
+const unlockScroll = () => {
+  document.body.style.overflow = ''
+  document.body.style.paddingRight = ''
+}
 
-const closeOnEscape = (e) => {
-    if (e.key === 'Escape') {
-        e.preventDefault();
-
-        if (props.show) {
-            close();
-        }
-    }
-};
-
-onMounted(() => document.addEventListener('keydown', closeOnEscape));
-
+onMounted(() => document.addEventListener('keydown', onKey))
 onUnmounted(() => {
-    document.removeEventListener('keydown', closeOnEscape);
+  document.removeEventListener('keydown', onKey)
+  unlockScroll()
+})
 
-    document.body.style.overflow = '';
-});
-
-const maxWidthClass = computed(() => {
-    return {
-        sm: 'sm:max-w-sm',
-        md: 'sm:max-w-md',
-        lg: 'sm:max-w-lg',
-        xl: 'sm:max-w-xl',
-        '2xl': 'sm:max-w-2xl',
-    }[props.maxWidth];
-});
+/*
+ | Only the lock happens here. Giving the scrollbar back the moment `show` goes
+ | false would put that same sideways shift on screen behind the modal while it
+ | is still fading out, so the unlock waits for @after-leave below.
+ */
+watch(() => props.show, v => { if (v) lockScroll() })
 </script>
 
 <template>
-    <dialog
-        class="z-50 m-0 min-h-full min-w-full overflow-y-auto bg-transparent backdrop:bg-transparent"
-        ref="dialog"
+  <Teleport to="body">
+    <!-- the tint and the card move separately: one fades, the other travels -->
+    <Transition
+      enter-active-class="transition-opacity duration-200 ease-out"
+      enter-from-class="opacity-0"
+      leave-active-class="transition-opacity duration-150 ease-in"
+      leave-to-class="opacity-0"
     >
-        <div
-            class="fixed inset-0 z-50 overflow-y-auto px-4 py-6 sm:px-0"
-            scroll-region
-        >
-            <Transition
-                enter-active-class="ease-out duration-300"
-                enter-from-class="opacity-0"
-                enter-to-class="opacity-100"
-                leave-active-class="ease-in duration-200"
-                leave-from-class="opacity-100"
-                leave-to-class="opacity-0"
-            >
-                <div
-                    v-show="show"
-                    class="fixed inset-0 transform transition-all"
-                    @click="close"
-                >
-                    <div
-                        class="absolute inset-0 bg-gray-500 opacity-75"
-                    />
-                </div>
-            </Transition>
+      <div v-if="show" class="fixed inset-0 z-[60] bg-slate-900/50" />
+    </Transition>
 
-            <Transition
-                enter-active-class="ease-out duration-300"
-                enter-from-class="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
-                enter-to-class="opacity-100 translate-y-0 sm:scale-100"
-                leave-active-class="ease-in duration-200"
-                leave-from-class="opacity-100 translate-y-0 sm:scale-100"
-                leave-to-class="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
-            >
-                <div
-                    v-show="show"
-                    class="mb-6 transform overflow-hidden rounded-lg bg-white shadow-xl transition-all sm:mx-auto sm:w-full"
-                    :class="maxWidthClass"
-                >
-                    <slot v-if="showSlot" />
-                </div>
-            </Transition>
+    <!--
+      A sheet rising from the bottom of a phone, a card settling into the middle
+      of a desktop. The transform sits on the full-screen layer rather than the
+      panel, which works because the two share a centre — scaling the layer
+      scales the panel about itself.
+    -->
+    <Transition
+      enter-active-class="transition duration-200 ease-out"
+      enter-from-class="opacity-0 motion-safe:translate-y-full motion-safe:sm:translate-y-0 motion-safe:sm:scale-95"
+      leave-active-class="transition duration-150 ease-in"
+      leave-to-class="opacity-0 motion-safe:translate-y-full motion-safe:sm:translate-y-0 motion-safe:sm:scale-95"
+      @after-leave="unlockScroll"
+    >
+      <div
+        v-if="show"
+        class="fixed inset-0 z-[60] flex items-end justify-center sm:items-center sm:p-5"
+        @click.self="emit('close')"
+      >
+        <!-- header and footer stay fixed, only the body scrolls,
+             so the submit button is always reachable on a phone -->
+        <div
+          class="flex max-h-[94vh] w-full flex-col rounded-t-2xl bg-white shadow-2xl sm:max-h-[90vh] sm:rounded-xl"
+          :class="maxWidth"
+        >
+          <div class="flex flex-none items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+            <h3 class="min-w-0 break-words text-lg font-semibold tracking-tight">{{ title }}</h3>
+            <button class="flex-none px-2 text-2xl leading-none text-slate-400 hover:text-slate-600"
+                    @click="emit('close')">&times;</button>
+          </div>
+
+          <div class="flex-1 overflow-y-auto px-5 py-5">
+            <slot />
+          </div>
+
+          <div v-if="$slots.footer"
+               class="sticky bottom-0 flex flex-none justify-end gap-2 border-t border-slate-100 bg-white px-5 py-3.5">
+            <slot name="footer" />
+          </div>
         </div>
-    </dialog>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
