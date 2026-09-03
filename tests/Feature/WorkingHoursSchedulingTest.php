@@ -203,8 +203,18 @@ class WorkingHoursSchedulingTest extends TestCase
         $this->actingAs($this->admin)
             ->get('/leads?reset=1')
             ->assertInertia(fn(Assert $page) => $page
-                // adding: the first call is at opening, not "in 48 hours"
+                /*
+                 | Adding at `connected` is 48 hours out, clamped to opening —
+                 | the same answer as changing an existing lead to `connected`,
+                 | because it is the same rule. This used to assert the opening
+                 | time on the next working day, which was an accurate
+                 | description of onLeadCreated() hardcoding now() and ignoring
+                 | the configured interval.
+                 */
                 ->where('options.followUpPreviews.connected',
+                    'A follow-up call will be scheduled for 05 Sep 2026, 09:00 AM.')
+                // adding at `fresh` is the interval-0 case, and still today
+                ->where('options.followUpPreviews.fresh',
                     'A follow-up call will be scheduled for 03 Sep 2026, 09:00 AM.')
                 // editing an existing lead: the interval for that stage
                 ->where('leads.data.0.follow_up_previews.connected',

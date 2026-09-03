@@ -80,12 +80,24 @@ class SessionFiltersTest extends TestCase
             ->assertSessionHas('filters.leads', ['stage' => 'connected']);
     }
 
+    /**
+     * The session entry is emptied; the prop is not quite empty, and the
+     * difference is the point.
+     *
+     * `range` is derived on the way out — it is the word the date control needs
+     * for the state it is in, and '' is All time — but it is never stored, so
+     * it cannot come back on the next visit as a filter nobody set. The session
+     * assertion below is the one that matters.
+     */
     public function test_reset_wipes_the_session_entry(): void
     {
         $this->actingAs($this->admin)
             ->withSession(['filters.leads' => ['search' => 'meera', 'stage' => 'connected']])
             ->get('/leads?reset=1')
-            ->assertInertia(fn(Assert $page) => $page->where('filters', []))
+            ->assertInertia(fn(Assert $page) => $page
+                ->where('filters', ['range' => ''])
+                ->missing('filters.search')
+                ->missing('filters.stage'))
             ->assertSessionHas('filters.leads', []);
     }
 

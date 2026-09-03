@@ -81,11 +81,11 @@ class VerifyDashboard extends Command
         $distinct = array_unique(array_map('json_encode', $this->pipelineByRange));
 
         if (count($distinct) === 1) {
-            $this->info('Pipeline snapshot is identical in all ' . count($this->pipelineByRange)
+            $this->info('Chart 1 is identical in all ' . count($this->pipelineByRange)
                 . ' ranges: ' . array_sum(reset($this->pipelineByRange)) . ' leads.');
         } else {
             $this->failures++;
-            $this->error('Pipeline snapshot CHANGED with the range — a date filter has come back:');
+            $this->error('Chart 1 CHANGED with the range — a date filter has come back:');
             foreach ($this->pipelineByRange as $range => $bars) {
                 $this->line("  $range: " . array_sum($bars) . ' — ' . json_encode($bars));
             }
@@ -251,9 +251,11 @@ class VerifyDashboard extends Command
 
     /**
      * The stages reached inside the range, one COUNT(DISTINCT lead_id) per
-     * stage — deliberately one query each, where the controller now runs a
-     * single GROUP BY. A grouping mistake would show up here as a disagreement
-     * rather than being shared by both sides.
+     * stage — the three event cards' population, independently counted.
+     *
+     * Deliberately one query each, where the controller runs a single GROUP BY.
+     * A grouping mistake would show up here as a disagreement rather than being
+     * shared by both sides.
      *
      * @return array<string, int>
      */
@@ -278,14 +280,31 @@ class VerifyDashboard extends Command
         return $out;   // zero-filled: every configured stage has a key
     }
 
-    /** Chart 1 — where the pipeline stands now. No date filter, by design. */
-    private function byStage(User $u): array
+    /**
+     * The two stage charts, from one query with an optional window — the same
+     * shape the controller uses, so that what is checked here is the window
+     * and the grouping rather than two unrelated pieces of SQL.
+     *
+     * Chart 1 passes nothing and gets every lead; chart 2 passes the range and
+     * gets the leads created inside it. Both group on leads.stage, never on
+     * todos.outcome_stage: a lead nobody has called yet has no transition to
+     * count, and it is still a lead standing at a stage.
+     *
+     * @return array<string, int>
+     */
+    private function byStage(User $u, ?Carbon $from = null, ?Carbon $to = null): array
     {
         $ls = $this->leadScope($u);
 
+        $window = '';
+        if ($from !== null && $to !== null) {
+            $window = " AND l.created_at BETWEEN '" . $from->format('Y-m-d H:i:s')
+                . "' AND '" . $to->format('Y-m-d H:i:s') . "'";
+        }
+
         $map = [];
         foreach (DB::select("SELECT l.stage s, COUNT(*) n FROM leads l
-                              WHERE l.deleted_at IS NULL $ls GROUP BY l.stage") as $r) {
+                              WHERE l.deleted_at IS NULL $ls $window GROUP BY l.stage") as $r) {
             $map[$r->s] = (int) $r->n;
         }
 
@@ -354,15 +373,17 @@ class VerifyDashboard extends Command
         $iCards = $this->cards($user, $from, $to);
 
         // the dashboard ships charts shaped for Chart.js; reshape to compare
-        $dStage = [];
-        foreach ($charts['byStage']['bars'] as $bar) {
-            $dStage[$bar['key']] = $bar['value'];
-        }
+        $reshape = function (array $bars): array {
+            $out = [];
+            foreach ($bars as $bar) {
+                $out[$bar['key']] = $bar['value'];
+            }
 
-        $dChanges = [];
-        foreach ($charts['stageChanges'] as $bar) {
-            $dChanges[$bar['key']] = $bar['value'];
-        }
+            return $out;
+        };
+
+        $dAllStages    = $reshape($charts['stagesAllTime']['bars']);
+        $dPeriodStages = $reshape($charts['stagesInPeriod']['bars']);
 
         $sourceKey = array_flip(config('crm.sources'));
         $dSource   = [];
@@ -411,9 +432,10 @@ class VerifyDashboard extends Command
         $check('Card 6  Pending follow-ups', $cards['pending'], $iCards['pending']);
         $check('        Conversion %',       $cards['conversion'], $iCards['conversion']);
 
-        $check('Chart 1 Pipeline right now',     $dStage,   $this->byStage($user));
-        $check('Chart 1 Pipeline header total',  $charts['byStage']['total'], array_sum($dStage));
-        $check('Chart 2 Stage changes in range', $dChanges, $this->stageChanges($user, $from, $to));
+        $check('Chart 1 All enquiries by stage', $dAllStages, $this->byStage($user));
+        $check('Chart 1 header total',           $charts['stagesAllTime']['total'], array_sum($dAllStages));
+        $check('Chart 2 Enquiries this period',  $dPeriodStages, $this->byStage($user, $from, $to));
+        $check('Chart 2 header total',           $charts['stagesInPeriod']['total'], array_sum($dPeriodStages));
         $check('Chart 3 Leads by source',        $dSource,  $iSource);
         $iTypes = $this->byTodoType($user);
         ksort($iTypes);
@@ -424,25 +446,49 @@ class VerifyDashboard extends Command
         /*
          | Cross-checks. The two columns above can agree and the dashboard still
          | be incoherent with itself, so these ask the questions a reader of the
-         | page would: does the stage chart account for every visible lead, and
-         | does the Pending card equal the two panels it sits above?
+         | page would: does the all-time stage chart account for every visible
+         | lead, is the period chart a subset of it, and does the Pending card
+         | equal the two panels it sits above?
          */
         $visibleLeads = $this->count('SELECT COUNT(*) n FROM leads l WHERE l.deleted_at IS NULL'
             . $this->leadScope($user));
 
         /*
-         | The three ties the redesign turns on. These are the pairs a reader
-         | is entitled to line up: the card and the bar are the same event,
-         | counted the same way, so anything but equality is a bug.
+         | The three event cards, against a per-stage count built one query at a
+         | time. No chart draws these any more — the ties they used to be are
+         | now checks that the cards themselves still come out of the right
+         | column, todos.completed_at rather than leads.created_at.
          */
-        $check('Tie     Bookings card = booking_done bar',
-            $cards['booked'], $dChanges['booking_done']);
-        $check('Tie     Site visits card = site_visit_done bar',
-            $cards['visits'], $dChanges['site_visit_done']);
-        $check('Tie     Lost card = lost bar',
-            $cards['lost'], $dChanges['lost']);
+        $iChanges = $this->stageChanges($user, $from, $to);
 
-        $check('Cross   pipeline totals all visible leads', array_sum($dStage), $visibleLeads);
+        $check('Card    Bookings = booking_done events',
+            $cards['booked'], $iChanges['booking_done']);
+        $check('Card    Site visits = site_visit_done events',
+            $cards['visits'], $iChanges['site_visit_done']);
+        $check('Card    Lost = lost events',
+            $cards['lost'], $iChanges['lost']);
+
+        /*
+         | Chart 1 has no window, so its bars must account for every lead this
+         | user can see — no more and no fewer. A whereBetween creeping back in
+         | shows up here as a shortfall, and in the cross-range comparison at
+         | the end of handle() as a snapshot that moves.
+         */
+        $check('Cross   chart 1 totals all visible leads', array_sum($dAllStages), $visibleLeads);
+
+        /*
+         | Chart 2 is chart 1 with a window, so it can never be the larger of
+         | the two — bar for bar. A pair that fails this is two queries again,
+         | not one query asked twice.
+         */
+        $subset = true;
+        foreach ($dPeriodStages as $k => $v) {
+            $subset = $subset && $v <= ($dAllStages[$k] ?? 0);
+        }
+
+        $check('Cross   chart 2 is a subset of chart 1', $subset, true);
+
+        $check('Cross   chart 2 total = Total leads card', array_sum($dPeriodStages), $cards['total']);
 
         /*
          | The same question of chart 4: zero-filling across config('crm.todo_types')
@@ -457,7 +503,7 @@ class VerifyDashboard extends Command
 
         $check('Cross   to-do bars total all pending to-dos', array_sum($dTypes), $allPending);
 
-        $this->pipelineByRange[$name] = $dStage;
+        $this->pipelineByRange[$name] = $dAllStages;
         $check('Cross   Pending card = both panels',
             $cards['pending'],
             $props['followUps']['today']['total'] + $props['followUps']['overdue']['total']);

@@ -27,11 +27,16 @@ class DashboardController extends Controller
     private const PANEL_ROWS = 50;
 
     /**
-     * Rows listed in the sign-in notice. It is a nudge, not a work queue —
-     * the count in its heading is the real total and the button next to it
-     * goes to the page that holds all of them.
+     * Rows listed in the sign-in modal. It is a nudge, not a work queue — the
+     * count in its heading is the real total, anything past this is summed up
+     * as "and N more", and the button in the footer goes to the page that
+     * holds all of them.
+     *
+     * Ten is what fits a phone's modal body without the list becoming a page
+     * of its own. Modal.vue caps the panel at 94vh and scrolls the body, so
+     * the number is about how much is worth reading, not about overflow.
      */
-    private const DIGEST_ROWS = 5;
+    private const DIGEST_ROWS = 10;
 
     /**
      * Set the first time the notice is actually rendered, and read on every
@@ -76,21 +81,26 @@ class DashboardController extends Controller
             /*
              | Four charts, in the order the page draws them.
              |
-             | Two of them are stock and two are flow, and they alternate: the
-             | pipeline snapshot and the to-do backlog are "right now" whatever
-             | the range says, while the stage changes and the source split are
-             | the range. Each card carries the `snapshot` marker or does not,
-             | so the pair in a row can never be mistaken for the same question
-             | asked twice.
+             | The first two are the same query — stagesByLead(), leads grouped
+             | by the stage each one is at now — asked twice, once without a
+             | window and once with the selected one. That is the only
+             | difference between them, and it is deliberate: read side by side
+             | they say where the whole book of enquiries stands and which part
+             | of it arrived in this period.
+             |
+             | Two of the four ignore the picker, and for the one reason
+             | anything here is allowed to: they describe a standing total
+             | rather than a period. The notes on both cards say so.
              */
             'charts'  => fn() => [
-                // stock, deliberately not date filtered — see byStage()
-                'byStage'      => $this->byStage($user),
-                // flow, and the one that ties to the cards above it
-                'stageChanges' => $this->stageChanges($user, $from, $to),
-                'bySource'     => $this->bySource($user, $from, $to),
-                // stock again: outstanding work, which has no date range
-                'byTodoType'   => $this->byTodoType($user),
+                // every lead, grouped by leads.stage. No window, ever.
+                'stagesAllTime'  => $this->stagesByLead($user),
+                // the same query, narrowed to leads.created_at in the range
+                'stagesInPeriod' => $this->stagesByLead($user, $from, $to),
+                // leads.created_at again, split by where they came from
+                'bySource'       => $this->bySource($user, $from, $to),
+                // the other exception: work outstanding right now
+                'byTodoType'     => $this->byTodoType($user),
             ],
             /*
              | The sign-in notice. A closure for the same reason the rest are,
@@ -255,14 +265,12 @@ class DashboardController extends Controller
         $today = Lead::visibleTo($user)->whereDate('created_at', today())->count();
 
         /*
-         | The three event cards, and the "Stage changes in this range" chart,
-         | all come out of stageEvents() — one query, read four times.
+         | The three event cards all come out of stageEvents() — one query,
+         | read three times.
          |
-         | They used to be four separate queries that merely looked alike, and
+         | They used to be three separate queries that merely looked alike, and
          | "these must stay identical" is not something a reader can check or a
-         | compiler can enforce. Now the Bookings card and the booking_done bar
-         | are the same integer, so they cannot drift apart no matter what is
-         | edited later. Same for Site visits and Lost.
+         | compiler can enforce.
          */
         $events = $this->stageEvents($user, $from, $to);
 
@@ -340,25 +348,37 @@ class DashboardController extends Controller
     /* ---------------- charts ---------------- */
 
     /**
-     * STOCK, not flow: where every lead sits right now. "Pipeline right now".
+     * Leads grouped by the stage each one is at now — the query behind BOTH
+     * stage charts, and the only one either of them runs.
      *
-     * Deliberately not date-filtered, and it must stay that way. A lead's
-     * current stage is a state, not an event that happened on a date, so asking
-     * "which stage were the leads created last week in" answers a question
-     * nobody has. Filtering it is what made a booking on an older lead vanish
-     * from this chart while the Bookings card counted it.
+     * Called with no window it is "Where all enquiries stand": every lead this
+     * user can see, at whatever stage it has reached, however long ago it came
+     * in. Called with one it is "Enquiries in this period": the same census
+     * narrowed to the leads that arrived between the two dates.
      *
-     * It will never tie to the cards, because it is not answering their
-     * question — 3 bookings *today* against 7 leads *sitting at* booking done
-     * are both right. The reconciling chart is stageChanges() below; this one
-     * ships its own total so the header can say what population it is drawing,
-     * and the page labels it as the all-time snapshot it is.
+     * One method rather than two, because the two charts differ in exactly one
+     * thing — whether there is a whereBetween — and a difference that small is
+     * one a reader has to be able to see at a glance rather than diff by eye.
+     * Written out twice they drifted: the second copy went off to `todos` and
+     * started counting stage transitions instead of leads, which is a different
+     * question with a different answer, and a Fresh lead created today (no
+     * completed to-do, so no transition, so no row) fell out of it entirely
+     * while sitting plainly in the first. Same table, same column, same
+     * grouping, same zero-fill, one window apart.
      *
+     * Soft-deleted leads are excluded by the model's own scope; visibleTo()
+     * keeps a user to the leads that are theirs to see.
+     *
+     * @param  ?Carbon  $from  null for all time — both bounds or neither
      * @return array{total: int, bars: list<array{key: string, label: string, value: int, color: string}>}
      */
-    private function byStage($user): array
+    private function stagesByLead($user, ?Carbon $from = null, ?Carbon $to = null): array
     {
         $counts = Lead::visibleTo($user)
+            ->when(
+                $from !== null && $to !== null,
+                fn($q) => $q->whereBetween('created_at', [$from, $to]),
+            )
             ->selectRaw('stage, count(*) as total')
             ->groupBy('stage')
             ->pluck('total', 'stage');
@@ -375,46 +395,27 @@ class DashboardController extends Controller
         /*
          | Summed from the bars, not counted again. Every lead has exactly one
          | stage and the bars are zero-filled across all of them, so the sum is
-         | the count of visible leads — and taking it from the bars means the
-         | header can never disagree with the chart underneath it, which is the
-         | whole failure this card is here to stop repeating.
+         | the count of leads in the population — and for the windowed call that
+         | is the New enquiries card, out of the same population. Taking it from
+         | the bars means a header can never disagree with the chart underneath
+         | it, which is the whole failure this shape is here to stop repeating.
          */
         return ['total' => array_sum(array_column($bars, 'value')), 'bars' => $bars];
     }
 
     /**
-     * FLOW, and the chart that reconciles with the cards.
-     *
-     * The same events the Bookings, Site visits and Lost cards count, drawn per
-     * stage instead of three at a time: filtered on todos.completed_at, when the
-     * transition happened, and distinct by lead. Its booking_done bar IS the
-     * Bookings card — the same integer out of the same query, not a second
-     * count that has to be kept in step by hand.
-     *
-     * Zero-filled across every configured stage, so it lines up bar for bar
-     * with the pipeline snapshot and a stage nobody reached this week reads as
-     * a zero rather than a missing category.
-     */
-    private function stageChanges($user, Carbon $from, Carbon $to): array
-    {
-        $counts = $this->stageEvents($user, $from, $to);
-
-        return collect(config('crm.stages'))
-            ->map(fn($label, $key) => [
-                'key'   => $key,
-                'label' => $label,
-                'value' => $counts[$key],
-                'color' => config("crm.stage_colors.$key"),
-            ])->values()->all();
-    }
-
-    /**
      * Every stage transition inside the range, counted once per lead per stage.
      *
-     * The single source for both the three event cards and the "Stage changes
-     * in this range" chart. One grouped query rather than four near-identical
-     * ones: four queries that must agree is a promise, one query read four
-     * times is a fact.
+     * The single source for the three event cards — Site visits done, Bookings
+     * and Lost. One grouped query rather than three near-identical ones: three
+     * queries that must agree is a promise, one query read three times is a
+     * fact.
+     *
+     * Nothing on the page draws this. It answers "what happened during the
+     * range", which is a question about `todos` and about time; the two stage
+     * charts answer "where do the leads stand", which is a question about
+     * `leads` and about stage. Mixing the two is what put a transition count
+     * under a chart titled for enquiries — see stagesByLead().
      *
      *   - todos.completed_at, never leads.created_at. A lead created 40 days
      *     ago that booked today is a booking that happened today.
@@ -463,12 +464,21 @@ class DashboardController extends Controller
     }
 
     /**
-     * STOCK: the work still waiting, split by the kind of work it is.
+     * The work still waiting, split by the kind of work it is. One of the two
+     * charts no range can move — the all-time stage census is the other.
      *
-     * Not date filtered, and for the same reason byStage() is not. A pending
+     * It ignores the picker for the single reason anything on this page is
+     * allowed to — it describes right now rather than a period. A pending
      * to-do is a thing that has not happened yet, so "pending to-dos created
-     * last week" answers nothing anyone asks — the question is what is
-     * outstanding right now, which is one number whatever the picker says.
+     * last week" answers nothing anyone asks. The card and the note both say
+     * so on the page.
+     *
+     * Same window as the Calls pending card, and deliberately the same
+     * expression: everything pending that was due on or before today. The card
+     * had that bound and the chart did not, so two to-dos scheduled for
+     * tomorrow sat in the chart's total while the card above it counted only
+     * one — a card and a chart disagreeing about the same rows, which is the
+     * exact failure the rest of this class is arranged to prevent.
      *
      * forUser(), not visibleTo(): this is a work list, so it is scoped by who
      * owns the task, exactly as the two panels and the Pending card are.
@@ -492,6 +502,7 @@ class DashboardController extends Controller
     private function byTodoType($user): array
     {
         $counts = Todo::forUser($user)->hasLead()->pending()
+            ->where('scheduled_at', '<=', today()->endOfDay())
             ->selectRaw('type, count(*) as total')
             ->groupBy('type')
             ->pluck('total', 'type');
@@ -506,7 +517,8 @@ class DashboardController extends Controller
             ->values()->all();
 
         // summed from the bars, like byStage(): the header cannot then disagree
-        // with the chart underneath it
+        // with the chart underneath it — and the sum is the Calls pending card,
+        // out of the same window
         return ['total' => array_sum(array_column($bars, 'value')), 'bars' => $bars];
     }
 
@@ -569,20 +581,20 @@ class DashboardController extends Controller
      * after signing in.
      *
      * Null means render nothing at all — either this session has already been
-     * told, or there is nothing to tell. An empty notice is worse than no
-     * notice: it trains people to close the thing without reading it.
+     * told, or there is nothing to tell. An empty modal is worse than no
+     * modal: it trains people to close the thing without reading it.
      *
-     * The population is exactly the Pending follow-ups card: everything still
-     * open that was due today or earlier. Yesterday's uncalled lead is the one
-     * this notice most needs to surface, so the cut is `<= end of today`
-     * rather than the Today tab's `= today`, and the wording on the panel says
-     * "due today or earlier" so the number is never a mystery.
+     * The population is exactly the Calls pending card: everything still open
+     * that was due today or earlier, in one list. Not two — there is no
+     * separate late bucket here and there must not be one. A row from an
+     * earlier day is the same kind of thing as a row from this morning; all
+     * that changes is that its timestamp carries a date, so the reader is not
+     * shown "10:30 AM" for something from last Tuesday.
      *
-     * Role scoping is scopeForUser() and nothing else: an admin gets the whole
-     * team's and the breakdown by assignee that goes with it, a telecaller or
-     * salesperson gets their own and no breakdown, because every row would
-     * carry their own name. The front end never filters — it is never sent
-     * anything it should not see.
+     * Role scoping is scopeForUser() and nothing else. An admin is sent the
+     * whole team's, grouped by the person it belongs to; a telecaller or
+     * salesperson is sent their own in a single unnamed group. The front end
+     * never filters, because it is never sent anything it should not see.
      */
     private function todayDigest(Request $request): ?array
     {
@@ -613,51 +625,52 @@ class DashboardController extends Controller
 
         $rows = $due()
             ->with([
-                // only what the flat rows below read: the notice builds its own
-                // arrays, so nothing appended by the model is serialised and
-                // the wide select the panels need is not needed here
+                // only what digestRow() reads: the modal builds its own arrays,
+                // so nothing appended by the model is serialised and the wide
+                // select the panels need is not needed here
                 'lead:id,first_name,middle_name,last_name,mobile_number,stage',
-                'owner:id,first_name,last_name',
             ])
             ->orderBy('scheduled_at')
             ->limit(self::DIGEST_ROWS)
             ->get();
 
-        $startOfToday = today()->startOfDay();
-
         return [
             'total'  => $total,
-            'groups' => $this->digestGroups($user, $due),
-            'rows'   => $rows->map(fn(Todo $todo) => [
-                'id'       => $todo->id,
-                'name'     => $todo->lead?->full_name,
-                'mobile'   => $todo->lead?->mobile_number,
-                'stage'    => $todo->lead?->stage,
-                'at'       => $todo->scheduled_at?->toIso8601String(),
-                // the row decides between a clock and a date from this, the way
-                // the two panels below do
-                'overdue'  => $todo->scheduled_at !== null
-                    && $todo->scheduled_at->lt($startOfToday),
-                'owner'    => $todo->owner?->display_name,
-            ])->all(),
+            'shown'  => $rows->count(),
+            // "and 4 more" — the difference between what is listed and what is
+            // owed, computed here so the modal never has to subtract anything
+            'more'   => $total - $rows->count(),
+            'groups' => $this->digestGroups($user, $due, $rows),
         ];
     }
 
     /**
-     * "Priya has 3, Amit has 4" — admin only.
+     * The listed rows, under the person they belong to.
      *
-     * Counted over the whole population, not over the handful of rows listed,
-     * so the breakdown adds up to the number in the heading. Anyone else is
-     * looking at a list that is entirely their own, so there is nothing to
-     * break down and an empty array turns the line off.
+     * Grouping is the admin's view and only the admin's: everyone else is
+     * looking at a list that is entirely their own, so it comes back as one
+     * group with a null name and the modal draws no heading for it. That keeps
+     * one shape on the wire instead of two, and the "is this mine or the
+     * team's" decision stays here rather than being re-derived in the Vue.
+     *
+     * The per-person count is that person's whole workload, not the number of
+     * their rows that made the cut — "Priya Shah · 18" beside six listed rows
+     * is the useful reading, and the modal's "and N more" accounts for the
+     * rest. Groups are built from the listed rows, so nobody appears as a
+     * heading with nothing under it.
      *
      * @param  callable(): \Illuminate\Database\Eloquent\Builder  $due
-     * @return list<array{name: string, count: int}>
+     * @param  \Illuminate\Database\Eloquent\Collection<int, Todo>  $rows
+     * @return list<array{name: ?string, count: int, rows: list<array<string, mixed>>}>
      */
-    private function digestGroups(User $user, callable $due): array
+    private function digestGroups(User $user, callable $due, $rows): array
     {
         if (! $user->isAdmin()) {
-            return [];
+            return [[
+                'name'  => null,
+                'count' => $rows->count(),
+                'rows'  => $rows->map(fn(Todo $todo) => $this->digestRow($todo))->all(),
+            ]];
         }
 
         $counts = $due()
@@ -665,17 +678,46 @@ class DashboardController extends Controller
             ->groupBy('assigned_to')
             ->pluck('total', 'assigned_to');
 
-        // first names: this is a one-line summary, and the full list underneath
-        // carries the full name against each row
         $names = User::whereIn('id', $counts->keys())
-            ->pluck('first_name', 'id');
+            ->get(['id', 'first_name', 'last_name'])
+            ->keyBy('id');
 
-        return $counts
-            ->map(fn($n, $id) => [
-                'name'  => $names[$id] ?? 'Unassigned',
-                'count' => (int) $n,
+        /*
+         | groupBy keeps first-appearance order and the rows arrive sorted by
+         | scheduled_at, so the person with the oldest outstanding call heads
+         | the list. Sorting the groups by size instead would bury a single
+         | forgotten call from last week under somebody's busy afternoon.
+         */
+        return $rows->groupBy('assigned_to')
+            ->map(fn($group, $id) => [
+                'name'  => $names[$id]?->display_name ?? 'Unassigned',
+                'count' => (int) ($counts[$id] ?? $group->count()),
+                'rows'  => $group->map(fn(Todo $todo) => $this->digestRow($todo))->values()->all(),
             ])
-            ->sortByDesc('count')
             ->values()->all();
+    }
+
+    /**
+     * One listed row: who to call, on what number, when, and where the lead
+     * stands.
+     *
+     * `earlier` says only whether the timestamp needs its date printed. It is
+     * not a status and the modal draws no second bucket from it — a call from
+     * yesterday sits in the same list as one from this morning, because that
+     * is what "due today or earlier" means.
+     *
+     * @return array<string, mixed>
+     */
+    private function digestRow(Todo $todo): array
+    {
+        return [
+            'id'      => $todo->id,
+            'name'    => $todo->lead?->full_name,
+            'mobile'  => $todo->lead?->mobile_number,
+            'stage'   => $todo->lead?->stage,
+            'at'      => $todo->scheduled_at?->toIso8601String(),
+            'earlier' => $todo->scheduled_at !== null
+                && $todo->scheduled_at->lt(today()->startOfDay()),
+        ];
     }
 }

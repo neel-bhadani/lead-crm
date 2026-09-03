@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\Concerns\ResolvesDateRange;
 use App\Http\Controllers\Concerns\ResolvesFilters;
 use App\Http\Requests\LeadRequest;
 use App\Models\Lead;
@@ -18,7 +19,7 @@ use Inertia\Inertia;
 
 class LeadController extends Controller
 {
-    use ResolvesFilters;
+    use ResolvesDateRange, ResolvesFilters;
 
     public function __construct(
         private LeadFollowUpService $service,
@@ -30,14 +31,26 @@ class LeadController extends Controller
         $user    = $request->user();
         $filters = $this->filters($request);
 
-        $leads = Lead::visibleTo($user)
-            // eager load or a 25-row page fires 50 extra queries
-            ->with([
-                'project:id,name',
-                // role too: the Assigned to column stacks it under the name
-                'owner:id,first_name,last_name,role',
-                'pendingTodo:id,lead_id,scheduled_at,type',
-            ])
+        [$from, $to] = $this->dateWindow($filters);
+
+        /*
+         | One base query, built once and read twice.
+         |
+         | The stage chips have to answer "how would this list break down by
+         | stage" — which is the list the user is looking at, every filter
+         | applied, except the stage filter itself. Selecting "Lost" must not
+         | make the other nine chips read zero.
+         |
+         | So the stage clause is the one thing this closure leaves out: the
+         | page of rows adds it, the counts do not. A closure rather than a
+         | clone, so the two cannot be the same query "by inspection" — they
+         | are the same query because they come from the same expression.
+         |
+         | visibleTo() is inside it, which is what keeps a telecaller's chips
+         | counting a telecaller's leads; the model's soft-delete scope comes
+         | along for the same ride.
+         */
+        $base = fn() => Lead::visibleTo($user)
             ->when($filters['search'] ?? null, function ($q, $s) {
                 $q->where(function ($w) use ($s) {
                     $w->where('first_name', 'like', "%$s%")
@@ -46,12 +59,22 @@ class LeadController extends Controller
                         ->orWhere('email', 'like', "%$s%");
                 });
             })
-            ->when($filters['stage'] ?? null, fn($q, $v) => $q->where('stage', $v))
             ->when($filters['project_id'] ?? null, fn($q, $v) => $q->where('project_id', $v))
             ->when($filters['source'] ?? null, fn($q, $v) => $q->where('source', $v))
             ->when($filters['assigned_to'] ?? null, fn($q, $v) => $q->where('assigned_to', $v))
-            ->when($filters['from'] ?? null, fn($q, $v) => $q->whereDate('created_at', '>=', $v))
-            ->when($filters['to'] ?? null, fn($q, $v) => $q->whereDate('created_at', '<=', $v))
+            // one clause, both bounds, on real datetimes rather than DATE() —
+            // see dateWindow() for why the boundaries are built where they are
+            ->when($from, fn($q) => $q->whereBetween('created_at', [$from, $to]));
+
+        $leads = $base()
+            ->when($filters['stage'] ?? null, fn($q, $v) => $q->where('stage', $v))
+            // eager load or a 25-row page fires 50 extra queries
+            ->with([
+                'project:id,name',
+                // role too: the Assigned to column stacks it under the name
+                'owner:id,first_name,last_name,role',
+                'pendingTodo:id,lead_id,scheduled_at,type',
+            ])
             ->latest()
             // no withQueryString(): the filters are in the session now, so a
             // page link carries nothing but its page number
@@ -64,31 +87,65 @@ class LeadController extends Controller
             ));
 
         return Inertia::render('Leads/Index', [
-            'leads'   => $leads,
-            'filters' => $filters,
-            'options' => $this->options($user),
+            'leads'       => $leads,
+            'stageCounts' => $this->stageCounts($base),
+            'filters'     => $this->withRangeWord($filters),
+            'options'     => $this->options($user),
         ]);
     }
 
     /**
-     * The filters this page owns. Leads have no default — an unfiltered list
-     * is the starting point — so a missing key simply means "do not filter".
+     * The stage breakdown of the list, as one grouped query.
      *
-     * `from` and `to` have no control on the page today; they are still owned
-     * here so that a hand-typed one is validated like the rest and cleared by
-     * the same Clear button.
+     * Zero-filled across every configured stage, so a stage nobody is sitting
+     * in is a chip reading 0 rather than a chip that is not there — a missing
+     * chip reads as a bug, and the row of them would reflow every time a filter
+     * changed.
+     *
+     * The total is summed from the chips rather than counted again. It is the
+     * "All" chip, and "All" disagreeing with the nine beside it is the one
+     * failure this feature cannot survive.
+     *
+     * @param  callable(): \Illuminate\Database\Eloquent\Builder  $base
+     * @return array{total: int, bars: list<array{key: string, label: string, value: int}>}
+     */
+    private function stageCounts(callable $base): array
+    {
+        $counts = $base()
+            ->selectRaw('stage, count(*) as total')
+            ->groupBy('stage')
+            ->pluck('total', 'stage');
+
+        $bars = collect(config('crm.stages'))
+            ->map(fn($label, $key) => [
+                'key'   => $key,
+                'label' => $label,
+                'value' => (int) ($counts[$key] ?? 0),
+            ])->values()->all();
+
+        return ['total' => array_sum(array_column($bars, 'value')), 'bars' => $bars];
+    }
+
+    /**
+     * The filters this page owns. Leads have no default — an unfiltered list
+     * is the starting point — so a missing key simply means "do not filter",
+     * and that is what All time and the All chip are.
      */
     private function filters(Request $request): array
     {
-        return $this->resolveFilters($request, 'leads', [
-            'search'      => ['sometimes', 'string', 'max:100'],
-            'stage'       => ['sometimes', 'string', Rule::in(array_keys(config('crm.stages')))],
-            'project_id'  => ['sometimes', 'integer', 'min:1'],
-            'source'      => ['sometimes', 'string', Rule::in(array_keys(config('crm.sources')))],
-            'assigned_to' => ['sometimes', 'integer', 'min:1'],
-            'from'        => ['sometimes', 'string', 'date_format:Y-m-d'],
-            'to'          => ['sometimes', 'string', 'date_format:Y-m-d'],
-        ]);
+        return $this->resolveFilters(
+            $request,
+            'leads',
+            [
+                'search'      => ['sometimes', 'string', 'max:100'],
+                'stage'       => ['sometimes', 'string', Rule::in(array_keys(config('crm.stages')))],
+                'project_id'  => ['sometimes', 'integer', 'min:1'],
+                'source'      => ['sometimes', 'string', Rule::in(array_keys(config('crm.sources')))],
+                'assigned_to' => ['sometimes', 'integer', 'min:1'],
+            ] + $this->dateRangeRules(),
+            [],
+            fn(array $state) => $this->sanitiseDates($state),
+        );
     }
 
     public function store(LeadRequest $request)
@@ -251,6 +308,9 @@ class LeadController extends Controller
         return [
             'stages'      => config('crm.stages'),
             'stageColors' => config('crm.stage_colors'),
+            // today in IST. The date inputs use this as their max rather than
+            // the browser clock, which may be in another timezone entirely.
+            'today'       => today()->toDateString(),
             'sources'     => config('crm.sources'),
             'reasons'     => config('crm.lost_reasons'),
             'projects'    => Project::active()->get(['id', 'name']),

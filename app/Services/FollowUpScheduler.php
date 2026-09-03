@@ -164,24 +164,43 @@ class FollowUpScheduler
     /**
      * What a brand-new lead gets, keyed the same way.
      *
-     * This cannot reuse previews(): onLeadCreated() does not call next() at
-     * all. A new lead is called as soon as someone is in the office, not after
-     * an interval, so the honest line is the opening time and not "in 48
-     * hours" — which is what the old hardcoded preview claimed.
+     * It goes through next(), like everything else. It used to say the opening
+     * time for every stage, because onLeadCreated() genuinely did schedule at
+     * now() whatever stage the lead arrived at — the preview was an accurate
+     * description of a bug. Now that creation reads the interval, so does this:
+     * a lead added as already visited is promised a call in 24 hours, and gets
+     * one.
+     *
+     * The wording is the only thing that stays separate from previews(). This
+     * form is adding a lead rather than moving one, so "a follow-up call" reads
+     * better than "next follow-up", and a lead created at booking_done was
+     * never open to be closed.
+     *
+     * `not_connected_count` is 0 on an unsaved lead, so the retry ladder starts
+     * at its first rung — which is what a lead being typed in as "not
+     * connected" for the first time actually is.
      *
      * @return array<string, string>
      */
     public function previewsForNewLead(): array
     {
-        $when     = $this->withinWorkingHours(now());
+        $lead     = new Lead(['stage' => 'fresh', 'not_connected_count' => 0]);
         $terminal = config('crm.terminal_stages');
 
         $previews = [];
 
         foreach (array_keys(config('crm.stages')) as $stage) {
-            $previews[$stage] = in_array($stage, $terminal)
-                ? 'This lead is closed, so no follow-up will be scheduled.'
-                : 'A follow-up call will be scheduled for ' . $when->format('d M Y, h:i A') . '.';
+            if (in_array($stage, $terminal)) {
+                $previews[$stage] = 'This lead is closed, so no follow-up will be scheduled.';
+
+                continue;
+            }
+
+            $when = $this->next($lead, $stage);
+
+            $previews[$stage] = $when
+                ? 'A follow-up call will be scheduled for ' . $when->format('d M Y, h:i A') . '.'
+                : 'No follow-up will be scheduled.';
         }
 
         return $previews;

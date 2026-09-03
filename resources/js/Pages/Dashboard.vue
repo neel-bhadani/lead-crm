@@ -6,7 +6,7 @@ import ChartCard from '@/Components/ChartCard.vue'
 import StageBadge from '@/Components/StageBadge.vue'
 import CompleteTaskModal from '@/Components/CompleteTaskModal.vue'
 import CallButtons from '@/Components/CallButtons.vue'
-import FollowUpNotice from '@/Components/FollowUpNotice.vue'
+import FollowUpModal from '@/Components/FollowUpModal.vue'
 import { useFilterVisit } from '@/composables/useFilterVisit.js'
 
 const props = defineProps({
@@ -161,13 +161,19 @@ const kpis = computed(() => [
     d3: props.cards.conversion === null
       ? null
       : `${props.cards.conversion}% booked so far` },
-  { v: props.cards.today, l: 'Enquiries today', d: 'Since midnight' },
-  { v: props.cards.visits, l: 'Site visits', d: 'Customers who visited' },
-  { v: props.cards.booked, l: 'Bookings', tone: 'good', d: 'Units booked' },
-  { v: props.cards.lost, l: 'Lost', d: 'Enquiries closed without booking' },
-  // STOCK: the two panels below this card, added together
+  /*
+   | The two tiles the date picker does not move, and the sub-line under each
+   | is where that is said. Every other figure on this page is "in the selected
+   | period"; these two are "right now", and a reader who is not told cannot
+   | tell a deliberate exception from a filter that failed to apply.
+   */
+  { v: props.cards.today, l: 'Enquiries today', d: 'Since midnight, whatever the dates' },
+  { v: props.cards.visits, l: 'Site visits', d: 'Visited in the selected period' },
+  { v: props.cards.booked, l: 'Bookings', tone: 'good', d: 'Booked in the selected period' },
+  { v: props.cards.lost, l: 'Lost', d: 'Closed without booking in the selected period' },
+  // the two panels below this card, added together
   { v: props.cards.pending, l: 'Calls pending', tone: props.cards.pending ? 'bad' : null,
-    d: 'Due today or earlier' },
+    d: 'Due today or earlier, whatever the dates' },
 ])
 
 const tick = { color: '#64748b', font: { size: 11 } }
@@ -178,9 +184,10 @@ const grid = { color: '#eef2f3' }
  |
  | They are deliberately identical to look at — same nine stages in the same
  | order, same colours, same horizontal bars — because the point of the pair is
- | that they can be read against each other. What separates them is the words
- | in the header: one is a census, one is a count of events in the range, and
- | the title and note say which.
+ | that they can be read against each other: the second chart's bars are a
+ | subset of the first's, so the pair reads as "of everything standing here,
+ | this much arrived in the period". They are the same server query too, one
+ | with a date window and one without; see DashboardController::stagesByLead().
  */
 const stageBars = rows => ({
   type: 'bar',
@@ -200,24 +207,23 @@ const stageBars = rows => ({
   },
 })
 
-// FLOW: the stages reached inside the range. This is the one that reconciles —
-// its Booking done bar is the Bookings card, out of the same query.
-const stageChangesChart = computed(() => stageBars(props.charts.stageChanges))
+// Every lead, at the stage it stands at now. The date picker cannot move it.
+const allStagesChart = computed(() => stageBars(props.charts.stagesAllTime.bars))
 
-// STOCK: where every lead sits right now, at no date in particular
-const pipelineChart = computed(() => stageBars(props.charts.byStage.bars))
+// The same census, narrowed to the leads created inside the range. Its bars
+// sum to the New enquiries card.
+const periodStagesChart = computed(() => stageBars(props.charts.stagesInPeriod.bars))
 
 /*
  | The note under "Where all enquiries stand", and it carries the count.
  |
- | The count used to sit beside the title with an ALL TIME chip after it, three
- | separate things competing for the same line. In the note it is doing the one
- | job it was ever for: saying which population the bars are drawn from, so
- | nobody lines 56 up against a New enquiries card reading 6 and calls it a
- | contradiction.
+ | The count is the point of putting a note there at all: it is the one number
+ | on the card that says how big the book is, and it does not move when the
+ | picker does. A reader who changes the range and watches this stay put has
+ | been told, without reading a word, that this chart is not part of the range.
  */
-const pipelineNote = computed(() =>
-  `Every enquiry ever received · ${props.charts.byStage.total} total`)
+const allStagesNote = computed(() =>
+  `All enquiries ever received · ${props.charts.stagesAllTime.total} total`)
 
 /*
  | The source palette. The stage charts do not use it — a stage's colour comes
@@ -342,23 +348,63 @@ const todoTypeChart = computed(() => ({
   },
 }))
 
-// the count, in the note — the same job pipelineNote does for the snapshot
+/*
+ | The count, in the note — the same job allStagesNote does for the stage census,
+ | plus the thing only this chart has to say.
+ |
+ | It is one of the several figures on the page the date picker does not move,
+ | so the note leads with the window it actually uses. Left as a bare count it was the
+ | one chart whose disagreement with the picker had no explanation on screen.
+ */
 const todoTypeNote = computed(() => {
   const n = props.charts.byTodoType.total
-  return `${n} ${n === 1 ? 'task' : 'tasks'} still open`
+  return `Due today or earlier, whatever the dates · ${n} ${n === 1 ? 'task' : 'tasks'} still open`
 })
 
-/* ---------------- the sign-in notice ---------------- */
+/* ---------------- the sign-in modal ---------------- */
 
 /*
- | Dismissal is local and needs to be nothing more.
+ | Opened a beat after the dashboard is on screen, never before.
  |
- | The server has already recorded that this session was shown the notice, so
- | the next dashboard visit will not send `todayDigest` at all — there is no
- | state here to persist and no request to make. This ref only closes the panel
- | on the page it is already open on.
+ | A modal that is already up when the page paints covers a blank page: the
+ | reader is asked to dismiss something before they have seen what it is in
+ | front of. So this waits for a frame to be handed to the compositor, and then
+ | a further moment on top, and the dashboard is what appears first.
+ |
+ | requestAnimationFrame alone is not the promise it looks like — the callback
+ | runs *before* the paint it is scheduled with. Pairing it with a timeout is
+ | what puts this after a real frame rather than merely after mount.
  */
-const noticeDismissed = ref(false)
+const DIGEST_DELAY_MS = 450
+
+const digestOpen = ref(false)
+
+let digestFrame
+let digestTimer
+
+onMounted(() => {
+  // the server sends this at most once a session, and only when there is
+  // something owed, so its presence is the whole decision
+  if (!props.todayDigest) return
+
+  digestFrame = requestAnimationFrame(() => {
+    digestTimer = setTimeout(() => { digestOpen.value = true }, DIGEST_DELAY_MS)
+  })
+})
+
+onBeforeUnmount(() => {
+  cancelAnimationFrame(digestFrame)
+  clearTimeout(digestTimer)
+})
+
+/*
+ | Closing is local and needs to be nothing more. The server recorded that this
+ | session was told at the moment it sent the prop, so the next dashboard visit
+ | will not send `todayDigest` at all — there is no state here to persist and no
+ | request to make. Escape, the close button, the overlay and "Go to my to-do
+ | list" all land here.
+ */
+const closeDigest = () => { digestOpen.value = false }
 
 /* ---------------- follow-up panels ---------------- */
 
@@ -475,12 +521,12 @@ const stopSuccess = router.on('success', () => {
    | Charts included, and they have to be.
    |
    | They used to be left out, on the grounds that one logged call does not
-   | move them. It moves three of the four: "Stage changes in this range" reads
-   | the same completed-to-do history the cards do, and logging a call closes a
-   | to-do and usually moves a lead, so the pipeline snapshot and the to-do
-   | backlog shift with it. Refreshing only the cards left the Booking card
-   | reading 3 beside a chart still drawing 2 — the numbers disagreeing on
-   | screen while the database was perfectly consistent.
+   | move them. It can move all four: "What happened in this period" reads the
+   | same completed-to-do history the cards do, and logging a call closes a
+   | to-do and usually moves a lead, so the stage split and the to-do backlog
+   | shift with it. Refreshing only the cards left the Booking card reading 3
+   | beside a chart still drawing 2 — the numbers disagreeing on screen while
+   | the database was perfectly consistent.
    |
    | `todayDigest` is deliberately not in the list. It is a sign-in notice, not
    | a live count, and re-requesting it would make the server think it had been
@@ -553,17 +599,6 @@ onBeforeUnmount(() => { stopBefore(); stopSuccess() })
       </div>
     </template>
 
-    <!--
-      The sign-in notice, above everything else and blocking nothing.
-
-      Rendered only when the server sent it, which it does once per session and
-      only when there is something owed — so there is no empty state and no
-      "seen" check on this side. Dismissing hides it here; the next visit does
-      not send it.
-    -->
-    <FollowUpNotice v-if="todayDigest && !noticeDismissed" :digest="todayDigest"
-                    @dismiss="noticeDismissed = true" />
-
     <!-- KPI strip -->
     <div class="mb-5 grid grid-cols-1 overflow-hidden rounded-xl border border-slate-200 bg-white
                 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
@@ -584,19 +619,23 @@ onBeforeUnmount(() => { stopBefore(); stopSuccess() })
     <!--
       Four charts, two by two on desktop and stacked on a phone.
 
-      The rows are the pairing: a stage read two ways on top, and underneath
-      the two questions that are not about stages at all. One grid rather than
-      two rows of two, so a single gap-4 sets both the column and the row gap.
+      The rows are the pairing: the same stage census twice on top, and
+      underneath the two questions that are not about stages at all. One grid
+      rather than two rows of two, so a single gap-4 sets both the column and
+      the row gap.
 
       The titles carry the distinction, which is the whole point of the pair on
-      the top row. "Where all enquiries stand" is a census and "What happened in
-      this period" is a count of events; read as "Pipeline right now" and "Stage
-      changes in this range" they were two spellings of the same phrase and a
-      reader had no reason to expect different numbers. The notes say it a
-      second time — "Every enquiry ever received" against "during the selected
-      dates" — and that is where it stops. The two that ignore the date picker
-      used to carry a tinted header as well, which made them read as a
-      different kind of panel rather than as two of four charts.
+      the top row. Both group leads by the stage each one is at now; the left
+      one covers every enquiry ever received and the right one only those
+      created inside the selected dates, so the right chart's bars are always a
+      subset of the left's. The notes say it a second time — "All enquiries
+      ever received" against "Leads created in the selected period" — and that
+      is where it stops.
+
+      Two of the four ignore the picker, and their notes say so on the card
+      rather than leaving the reader to guess. The stage census used to carry
+      an ALL TIME chip beside its title instead, which made it read as a
+      different kind of panel rather than as one of four charts.
 
       So there is nothing here but a title, a note and a config on every one of
       the four. Every scrap of card styling is in ChartCard and takes no
@@ -604,15 +643,15 @@ onBeforeUnmount(() => { stopBefore(); stopSuccess() })
       plot boxes in step across a row.
     -->
     <div class="mb-5 grid gap-4 xl:grid-cols-2">
-      <!-- STOCK: where every enquiry sits right now, at no date in particular -->
+      <!-- every lead ever, by the stage each is at now. No date filter. -->
       <ChartCard title="Where all enquiries stand"
-                 :note="pipelineNote"
-                 :config="pipelineChart" />
+                 :note="allStagesNote"
+                 :config="allStagesChart" />
 
-      <!-- FLOW: same events as the three cards, one bar per stage -->
-      <ChartCard title="What happened in this period"
-                 note="Each stage reached during the selected dates"
-                 :config="stageChangesChart" />
+      <!-- the same census, narrowed to the leads created in the range -->
+      <ChartCard title="Enquiries in this period"
+                 note="Leads created in the selected period"
+                 :config="periodStagesChart" />
 
       <!--
         Wrapped, so the legend can follow the width of the card rather than the
@@ -631,7 +670,7 @@ onBeforeUnmount(() => { stopBefore(); stopSuccess() })
                    :empty="!charts.bySource.length" empty-text="No leads in this range" />
       </div>
 
-      <!-- STOCK again: the backlog, which no date range can move -->
+      <!-- the one chart no date range moves; the note on it says so -->
       <ChartCard title="Pending work by type"
                  :note="todoTypeNote"
                  :config="todoTypeChart" />
@@ -757,5 +796,12 @@ onBeforeUnmount(() => { stopBefore(); stopSuccess() })
     <!-- the same modal the To-do page uses, and the same endpoint behind it -->
     <CompleteTaskModal :show="completeOpen" :todo="active" :options="options"
                        @close="completeOpen = false" />
+
+    <!--
+      The sign-in modal. Teleported to the body by Modal.vue, so where it sits
+      in this template decides nothing but reading order; it lives beside the
+      page's other modal rather than up among the cards it opens over.
+    -->
+    <FollowUpModal :show="digestOpen" :digest="todayDigest" @close="closeDigest" />
   </AppLayout>
 </template>

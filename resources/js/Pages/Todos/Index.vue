@@ -7,9 +7,19 @@ import CompleteTaskModal from '@/Components/CompleteTaskModal.vue'
 import TodoFormModal from '@/Components/TodoFormModal.vue'
 import CallButtons from '@/Components/CallButtons.vue'
 import AssignedTo from '@/Components/AssignedTo.vue'
+import FilterChips from '@/Components/FilterChips.vue'
 import { useFilterVisit, useDebouncedFilters } from '@/composables/useFilterVisit.js'
 
-const props = defineProps({ todos: Object, tab: String, counts: Object, filters: Object, options: Object })
+const props = defineProps({
+  todos: Object,
+  tab: String,
+  // the four tab badges: how much is in each list, no filter applied
+  counts: Object,
+  // the type breakdown of THIS tab, every other filter applied except type
+  types: Object,
+  filters: Object,
+  options: Object,
+})
 
 const isAdmin = computed(() => usePage().props.auth.user.role === 'admin')
 
@@ -29,8 +39,15 @@ const tabs = [
 
 const f = reactive({
   search: props.filters.search ?? '',
+  // set by the chips now, not by a dropdown
   type: props.filters.type ?? '',
   assigned_to: props.filters.assigned_to ?? '',
+
+  // '' is All time. 'custom' is a state of this control only — the server
+  // stores the pair of dates and derives the word on the way back out
+  range: props.filters.range ?? '',
+  from: props.filters.from ?? '',
+  to: props.filters.to ?? '',
 })
 
 // the tab we last asked for: props.tab only catches up once the visit lands,
@@ -41,13 +58,51 @@ watch(() => props.tab, v => (wantedTab = v))
 const { visit } = useFilterVisit(route('todos.index'))
 
 /*
+ | A preset and a custom pair are alternatives, so only one of them is ever on
+ | the wire. Without this, switching from a custom range back to "Last 7 days"
+ | would still carry the two dates along, and the server — which reads a pair as
+ | custom whatever else it is told — would keep showing the custom range under a
+ | control that said something else.
+ |
+ | 'custom' itself is never sent. It is not a value the server stores; the dates
+ | are, and it infers the word from them.
+ */
+const payload = () => {
+  const custom = f.range === 'custom'
+
+  return { ...f, range: custom ? '' : f.range, from: custom ? f.from : '', to: custom ? f.to : '' }
+}
+
+/*
+ | The same rules the server applies, so an impossible range is never sent.
+ |
+ | Both dates are ISO yyyy-mm-dd, so they compare correctly as plain strings and
+ | none of this has to build a Date. That matters: the browser may be in any
+ | timezone, and `options.today` is today in IST as the server sees it.
+ */
+const dateError = computed(() => {
+  if (f.range !== 'custom' || !f.from || !f.to) return ''
+  if (f.from > f.to) return 'From must not be after To.'
+  if (f.to > props.options.today) return 'To must not be in the future.'
+  return ''
+})
+
+/*
  | Every field the page owns goes out on every visit, the tab among them, and
  | reset=1 goes with them: the request is the whole instruction, so what is
  | named is on and what is missing is off. The empty ones are dropped before
  | it leaves — see withoutEmpty() in the composable for why the two belong
  | together.
+ |
+ | A half-typed custom range sends nothing at all. The error is already on
+ | screen; a visit on top of it would either reload the same list for no reason
+ | or apply a range the user has not finished choosing.
  */
-const push = () => visit({ reset: 1, tab: wantedTab, ...f })
+const push = () => {
+  if (f.range === 'custom' && (!f.from || !f.to || dateError.value)) return
+
+  visit({ reset: 1, tab: wantedTab, ...payload() })
+}
 
 const filters = useDebouncedFilters(f, push)
 
@@ -60,8 +115,37 @@ const clearFilters = () => {
   filters.cancel()
 
   // every field is empty now, so this sends reset=1 and the tab: the session
-  // entry is wiped, and the tab rides along because it is the one the user is
-  // looking at, not something they asked to lose
+  // entry is wiped — type chip back to All, dates back to All time — and the
+  // tab rides along because it is the one the user is looking at, not
+  // something they asked to lose
+  push()
+}
+
+/* ---------------- type chips ---------------- */
+
+/*
+ | All, then one per configured type, in config order.
+ |
+ | The counts are the server's — one grouped query over this tab's list with the
+ | type clause left out — so clicking a chip re-filters the table without moving
+ | the numbers on the chips beside it, or the badges on the tabs above it.
+ |
+ | No colours. Task types have none in config and inventing four would imply a
+ | meaning they do not have; FilterChips renders a colourless chip in neutral
+ | slate, which is exactly how the Leads page draws its own "All".
+ |
+ | Labels come from config('crm.todo_types') by way of the server. No type is
+ | spelled out in this file.
+ */
+const chips = computed(() => [
+  { key: '', label: 'All', value: props.types.total, color: null },
+  ...props.types.bars.map(bar => ({ ...bar, color: null })),
+])
+
+/** Clicking the active chip clears the filter, exactly as All does. */
+const setType = key => {
+  filters.silently(() => { f.type = f.type === key ? '' : key })
+  filters.cancel()
   push()
 }
 
@@ -121,20 +205,71 @@ const leadLine = t => [t.lead?.mobile_number, t.lead?.project?.name].filter(Bool
         </button>
       </div>
 
-      <!-- filters -->
+      <!--
+        Filters. Full width and stacked below md, inline from 768 up, the same
+        as the Leads page.
+
+        No type dropdown: the chips below are the type filter now, and having
+        both would be two controls for one piece of state.
+      -->
       <div class="flex flex-wrap gap-2 border-b border-slate-100 p-3 sm:p-4">
-        <input v-model="f.search" type="search" placeholder="Search lead name or mobile" class="w-full sm:!w-64" />
-        <select v-model="f.type" class="w-full sm:!w-40">
-          <option value="">All types</option>
-          <option v-for="(l, k) in options.types" :key="k" :value="k">{{ l }}</option>
-        </select>
-        <select v-if="isAdmin" v-model="f.assigned_to" class="w-full sm:!w-44"
+        <input v-model="f.search" type="search" placeholder="Search lead name or mobile"
+               class="w-full md:!w-64" />
+        <select v-if="isAdmin" v-model="f.assigned_to" class="w-full md:!w-44"
                 aria-label="Assigned to">
           <option value="">Assigned to</option>
           <option v-for="u in options.users" :key="u.id" :value="u.id">{{ u.first_name }} {{ u.last_name }}</option>
         </select>
-        <button class="btn-ghost w-full sm:w-auto" @click="clearFilters">Clear</button>
+
+        <!--
+          Which column this filters on is the server's business and it changes
+          with the tab: due date on the three pending tabs, completion date on
+          Completed. The label follows, so the control never quietly means
+          something other than it says.
+        -->
+        <select v-model="f.range" class="w-full md:!w-36"
+                :aria-label="tab === 'completed' ? 'Date completed' : 'Date due'">
+          <option value="">All time</option>
+          <option value="today">Today</option>
+          <option value="7">Last 7 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="custom">Custom…</option>
+        </select>
+
+        <!--
+          Only when it is asked for, and nothing is applied until both dates are
+          set and agree with each other. `max` is today in IST from the server,
+          not the browser's idea of today.
+        -->
+        <template v-if="f.range === 'custom'">
+          <input v-model="f.from" type="date" :max="options.today"
+                 class="w-full md:!w-40" aria-label="From date" />
+          <input v-model="f.to" type="date" :min="f.from" :max="options.today"
+                 class="w-full md:!w-40" aria-label="To date" />
+        </template>
+
+        <button class="btn-ghost w-full md:w-auto" @click="clearFilters">Clear</button>
+
+        <!-- w-full so the complaint gets a line of its own rather than
+             elbowing a control off the row it belongs to -->
+        <p v-if="dateError" class="w-full text-xs font-medium text-rose-700" role="alert">
+          {{ dateError }}
+        </p>
+
+        <!-- says which date the filter above is about, once it is doing
+             anything at all -->
+        <p v-if="f.range" class="w-full text-xs text-slate-400">
+          {{ tab === 'completed' ? 'Filtering on when the task was completed.'
+             : 'Filtering on when the task is due.' }}
+        </p>
       </div>
+
+      <!--
+        Type chips: the type filter, and the type breakdown of this tab, in one
+        control. The strip itself is FilterChips, shared with the Leads page so
+        the two cannot drift apart.
+      -->
+      <FilterChips :chips="chips" :active="f.type" @select="setType" />
 
       <!-- empty -->
       <div v-if="!todos.data.length" class="px-5 py-14 text-center text-sm text-slate-500">

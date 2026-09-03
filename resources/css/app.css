@@ -7,6 +7,15 @@
  */
 @layer base {
 
+    /*
+     | The page header is sticky, so anything jumped to by an anchor or by
+     | scrollIntoView() would otherwise land underneath it. Roughly the stuck
+     | height of the header (title row + padding) plus a little air.
+     */
+    html {
+        scroll-padding-top: 5.5rem;
+    }
+
     input[type='text'],
     input[type='email'],
     input[type='tel'],

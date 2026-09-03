@@ -213,57 +213,228 @@ class DashboardRangeTest extends TestCase
         $this->assertSame(1, Todo::where('status', 'pending')->count());
     }
 
-    /* ---------------- the charts ---------------- */
+    /* ---------------- the two stage charts ---------------- */
 
-    /** An empty range still draws a full set of bars and a dash, not a gap. */
-    public function test_an_empty_range_is_zero_filled_and_shows_a_dash(): void
+    /**
+     * The pair, in one test.
+     *
+     * Chart 1 is every enquiry ever received, at the stage it stands at now.
+     * Chart 2 is the same census narrowed to the leads created in the range.
+     * One query with an optional window, so the only thing that can differ
+     * between them is the window — which is exactly what this asserts.
+     */
+    public function test_the_two_charts_differ_only_by_the_date_window(): void
     {
-        $charts = $this->charts('from=2026-07-01&to=2026-07-05');
-        $cards  = $this->cards('from=2026-07-01&to=2026-07-05');
+        $this->stageCensusFixture();
 
-        // the range-filtered stage chart keeps every bar, all of them zero
-        $this->assertCount(9, $charts['stageChanges']);
-        $this->assertSame(0, array_sum(array_column($charts['stageChanges'], 'value')));
-        // the stage chart is a snapshot, so it keeps every bar whatever the range
-        $this->assertCount(9, $charts['byStage']['bars']);
+        $today = ['fresh' => 1, 'not_connected' => 1, 'site_visit_done' => 1];
 
-        $this->assertSame(0, $cards['total']);
-        $this->assertNull($cards['conversion']);
+        foreach (['range=today', 'range=7', 'range=30'] as $query) {
+            $this->assertSame($today, $this->nonZero($query, 'stagesAllTime'), $query);
+            $this->assertSame($today, $this->nonZero($query, 'stagesInPeriod'), $query);
+        }
+
+        // yesterday only: nothing was created then, so chart 2 empties...
+        $yesterday = 'from=2026-09-01&to=2026-09-01';
+
+        $this->assertSame([], $this->nonZero($yesterday, 'stagesInPeriod'));
+        $this->assertSame(0, $this->charts($yesterday)['stagesInPeriod']['total']);
+
+        // ...while chart 1 has not moved at all
+        $this->assertSame($today, $this->nonZero($yesterday, 'stagesAllTime'));
     }
 
     /**
-     * The stage chart is not date filtered, so a lead booked today is in it
-     * whenever it was created — which is what stopped it contradicting the
-     * Bookings card.
+     * The date buttons must have no effect on chart 1 whatsoever — not on a
+     * bar, not on the total, not on the order. Asserted on the whole payload
+     * rather than on a total, because a total can stay put while the bars
+     * underneath it move.
      */
-    public function test_the_stage_chart_ignores_the_range_entirely(): void
+    public function test_chart_one_is_byte_identical_in_every_range(): void
+    {
+        $this->stageCensusFixture();
+        $this->lead(now()->subDays(200))->forceFill(['stage' => 'lost'])->save();
+        $this->lead(now()->subDays(40))->forceFill(['stage' => 'booking_done'])->save();
+
+        $queries = ['range=today', 'range=7', 'range=30',
+                    'from=2026-09-01&to=2026-09-01', 'from=2026-01-01&to=2026-09-02'];
+
+        $seen = [];
+
+        foreach ($queries as $query) {
+            $seen[$query] = $this->charts($query)['stagesAllTime'];
+        }
+
+        $this->assertCount(1, collect($seen)->unique(fn($c) => json_encode($c)),
+            'chart 1 moved with the range: ' . json_encode($seen));
+
+        // and it really is every lead, not merely a stable subset of them
+        $this->assertSame(5, reset($seen)['total']);
+        $this->assertSame(Lead::count(), reset($seen)['total']);
+    }
+
+    /** Chart 2 counts leads.created_at, so a lead is in the ranges it arrived in. */
+    public function test_chart_two_follows_the_range_on_created_at(): void
     {
         $lead = $this->lead(now()->subDays(40));
         $this->service()->changeStage($lead, 'booking_done', ['booked_unit' => 'A-1']);
 
         foreach (['today', '7', '30'] as $range) {
-            $bars = collect($this->charts("range=$range")['byStage']['bars'])->keyBy('key');
+            $bars = $this->bars("range=$range", 'stagesInPeriod');
 
-            $this->assertSame(1, $bars['booking_done']['value'], "range=$range");
+            // created outside all three ranges, so it is in none of them
+            $this->assertSame(0, $bars['booking_done'], "range=$range");
+            // ...while the event itself happened today, and the card counts it
             $this->assertSame(1, $this->card($range, 'booked'), "range=$range");
+            // ...and it stands at booking_done, so chart 1 has it in every range
+            $this->assertSame(1, $this->bars("range=$range", 'stagesAllTime')['booking_done']);
+        }
+
+        // and the range that does contain its creation date has it
+        $this->assertSame(1, $this->bars('from=2026-07-24&to=2026-09-02', 'stagesInPeriod')['booking_done']);
+    }
+
+    /**
+     * THE BUG. A lead created today at Fresh, on the Today range.
+     *
+     * It has never been called, so it has no completed to-do and therefore no
+     * `todos.outcome_stage` row. Chart 2 used to count stage TRANSITIONS out of
+     * that table, so this lead could not appear in it at any range — it showed
+     * in chart 1 and vanished from chart 2, on the very range that should have
+     * been most sure to hold it. Counting leads.stage instead is what fixes it,
+     * and a lead with no to-dos at all is the case that proves the chart is not
+     * reading `todos` any more.
+     */
+    public function test_a_fresh_lead_created_today_is_in_both_charts(): void
+    {
+        $this->lead(now())->forceFill(['stage' => 'fresh'])->save();
+
+        $this->assertSame(0, Todo::whereNotNull('outcome_stage')->count(), 'no transition exists');
+
+        $this->assertSame(1, $this->bars('range=today', 'stagesAllTime')['fresh'],
+            'a Fresh lead created today is missing from chart 1');
+        $this->assertSame(1, $this->bars('range=today', 'stagesInPeriod')['fresh'],
+            'a Fresh lead created today is invisible in chart 2 — the reported bug');
+
+        $this->assertSame(1, $this->charts('range=today')['stagesInPeriod']['total']);
+        $this->assertSame(1, $this->card('today', 'total'));
+    }
+
+    /**
+     * Chart 2's bars are the New enquiries card: same table, same column, one
+     * grouped and one counted.
+     */
+    public function test_chart_two_bars_sum_to_the_new_enquiries_card(): void
+    {
+        $this->stageCensusFixture();
+        $this->lead(now()->subDays(10));
+
+        foreach (['today' => 3, '7' => 3, '30' => 4] as $range => $expected) {
+            $chart = $this->charts("range=$range")['stagesInPeriod'];
+
+            $this->assertSame($expected, $chart['total'], "range=$range");
+            $this->assertSame($expected, array_sum(array_column($chart['bars'], 'value')), "range=$range");
+            $this->assertSame($this->card($range, 'total'), $chart['total'], "range=$range");
         }
     }
 
-    /* ---------------- the two stage charts ---------------- */
+    /**
+     * Chart 1's bars are every visible lead, so its header total is Lead::count()
+     * and no range can shrink it.
+     */
+    public function test_chart_one_accounts_for_every_lead(): void
+    {
+        $this->lead(now()->subDays(200));
+        $this->lead(now()->subDays(40));
+        $this->lead(now());
+
+        foreach (['range=today', 'range=7', 'range=30', 'from=2026-09-01&to=2026-09-01'] as $query) {
+            $chart = $this->charts($query)['stagesAllTime'];
+
+            $this->assertSame(3, $chart['total'], $query);
+            $this->assertSame(3, array_sum(array_column($chart['bars'], 'value')), $query);
+            $this->assertSame(Lead::count(), $chart['total'], $query);
+        }
+    }
 
     /**
-     * The three ties the page is arranged around.
-     *
-     * "Stage changes in this range" and the three event cards come out of one
-     * query — DashboardController::stageEvents() — so these cannot drift by
-     * construction. They are asserted anyway, in every range, because "they
-     * share a query" is a fact about today's code and this is a fact about the
-     * output.
+     * Chart 2 groups by where the lead stands now, not by what happened in the
+     * range. A lead that moved twice today is still one lead at one stage, and
+     * a transition into the range on a lead created before it stays out.
      */
-    public function test_the_three_cards_equal_their_bars_in_every_range(): void
+    public function test_chart_two_counts_leads_not_transitions(): void
     {
-        // one lead visits and books today; another was lost today; a third
-        // booked long ago, so the ranges genuinely disagree with each other
+        // created inside the range, moved twice inside it: one bar, one lead
+        $inside = $this->lead(now());
+        $this->service()->changeStage($inside, 'booking_done', ['booked_unit' => 'A-1']);
+        $this->service()->changeStage($inside->fresh(), 'in_discussion');
+        $this->service()->changeStage($inside->fresh(), 'booking_done', ['booked_unit' => 'A-1']);
+
+        // created before the range, moved inside it: not an enquiry from today
+        $before = $this->lead(now()->subDays(40));
+        $this->service()->changeStage($before, 'site_visit_done');
+
+        $this->assertSame(4, Todo::whereNotNull('outcome_stage')->count(), 'four transitions');
+
+        $bars = $this->bars('range=today', 'stagesInPeriod');
+
+        $this->assertSame(1, $bars['booking_done'], 'two transitions, one lead');
+        $this->assertSame(0, $bars['in_discussion'], 'it does not stand there any more');
+        $this->assertSame(0, $bars['site_visit_done'], 'created before the range');
+        $this->assertSame(1, $this->charts('range=today')['stagesInPeriod']['total']);
+    }
+
+    /** A soft-deleted lead leaves both charts. */
+    public function test_a_deleted_lead_leaves_both_stage_charts(): void
+    {
+        $lead = $this->lead(now());
+        $this->service()->changeStage($lead, 'booking_done', ['booked_unit' => 'A-1']);
+
+        $this->assertSame(1, $this->charts('range=today')['stagesAllTime']['total']);
+        $this->assertSame(1, $this->charts('range=today')['stagesInPeriod']['total']);
+
+        $this->actingAs($this->admin)->delete("/leads/{$lead->id}");
+
+        $charts = $this->charts('range=today');
+
+        $this->assertSame(0, $charts['stagesAllTime']['total']);
+        $this->assertSame(0, $charts['stagesInPeriod']['total']);
+        $this->assertSame(0, $this->card('today', 'booked'));
+    }
+
+    /** Both charts render all nine stages, in config order, zeros included. */
+    public function test_both_stage_charts_are_zero_filled_across_every_stage(): void
+    {
+        $charts = $this->charts('from=2026-07-01&to=2026-07-05');
+
+        foreach (['stagesAllTime', 'stagesInPeriod'] as $chart) {
+            $this->assertCount(9, $charts[$chart]['bars'], $chart);
+            $this->assertSame(array_keys(config('crm.stages')),
+                array_column($charts[$chart]['bars'], 'key'), $chart);
+            $this->assertSame(0, array_sum(array_column($charts[$chart]['bars'], 'value')), $chart);
+            $this->assertSame(0, $charts[$chart]['total'], $chart);
+        }
+    }
+
+    /** An empty range still draws a full set of bars and a dash, not a gap. */
+    public function test_an_empty_range_is_zero_filled_and_shows_a_dash(): void
+    {
+        $cards = $this->cards('from=2026-07-01&to=2026-07-05');
+
+        $this->assertSame(0, $cards['total']);
+        $this->assertNull($cards['conversion']);
+    }
+
+    /* ---------------- the event cards ---------------- */
+
+    /**
+     * The three event cards read todos.completed_at, not leads.created_at. No
+     * chart draws these any more, so this is where that column is pinned down:
+     * a lead created 40 days ago that books today is a booking that happened
+     * today, in every range that contains today.
+     */
+    public function test_the_event_cards_count_when_the_event_happened(): void
+    {
         $visited = $this->lead(now()->subDays(40));
         $this->service()->changeStage($visited, 'site_visit_done');
         $this->service()->changeStage($visited->fresh(), 'booking_done', ['booked_unit' => 'A-1']);
@@ -274,20 +445,27 @@ class DashboardRangeTest extends TestCase
         $this->service()->changeStage($this->lead(now()->subDays(20)), 'booking_done', ['booked_unit' => 'A-2']);
         Carbon::setTestNow(Carbon::parse('2026-09-02 12:00'));
 
-        $ranges = ['range=today', 'range=7', 'range=30', 'from=2026-08-01&to=2026-08-15'];
-
-        foreach ($ranges as $query) {
-            $cards = $this->cards($query);
-            $bars  = collect($this->charts($query)['stageChanges'])->keyBy('key');
-
-            $this->assertSame($cards['booked'], $bars['booking_done']['value'], $query);
-            $this->assertSame($cards['visits'], $bars['site_visit_done']['value'], $query);
-            $this->assertSame($cards['lost'],   $bars['lost']['value'], $query);
+        foreach (['today', '7'] as $range) {
+            $this->assertSame(1, $this->card($range, 'booked'), "range=$range");
+            $this->assertSame(1, $this->card($range, 'visits'), "range=$range");
+            $this->assertSame(1, $this->card($range, 'lost'), "range=$range");
         }
+
+        // Last 30 days reaches back to 4 August, so it holds both bookings
+        $this->assertSame(2, $this->card('30', 'booked'));
+        $this->assertSame(1, $this->card('30', 'visits'));
+        $this->assertSame(1, $this->card('30', 'lost'));
+
+        // the August booking is in its own window and alone in it
+        $august = $this->cards('from=2026-08-01&to=2026-08-15');
+
+        $this->assertSame(1, $august['booked']);
+        $this->assertSame(0, $august['visits']);
+        $this->assertSame(0, $august['lost']);
     }
 
-    /** One lead reaching a stage twice in a range is still one lead on the bar. */
-    public function test_the_range_chart_counts_a_lead_once_per_stage(): void
+    /** One lead reaching a stage twice in a range is still one lead on the card. */
+    public function test_an_event_card_counts_a_lead_once_per_stage(): void
     {
         $lead = $this->lead(now()->subDays(40));
 
@@ -296,68 +474,7 @@ class DashboardRangeTest extends TestCase
         $this->service()->changeStage($lead->fresh(), 'booking_done', ['booked_unit' => 'A-1']);
 
         $this->assertSame(2, Todo::where('outcome_stage', 'booking_done')->count(), 'two events');
-
-        $bars = collect($this->charts('range=today')['stageChanges'])->keyBy('key');
-
-        $this->assertSame(1, $bars['booking_done']['value'], 'but one lead');
-        $this->assertSame(1, $this->card('today', 'booked'));
-    }
-
-    /**
-     * The snapshot is the one chart that must not move with the range. A filter
-     * creeping back onto it is invisible inside any single range.
-     */
-    public function test_the_pipeline_snapshot_is_the_same_in_every_range(): void
-    {
-        $this->lead(now()->subDays(200));
-        $this->lead(now()->subDays(40));
-        $this->lead(now());
-
-        $seen = [];
-
-        foreach (['range=today', 'range=7', 'range=30', 'from=2026-08-01&to=2026-08-15'] as $query) {
-            $chart  = $this->charts($query)['byStage'];
-            $seen[] = $chart;
-
-            // the header total is the bars, so the two can never disagree
-            $this->assertSame(3, $chart['total'], $query);
-            $this->assertSame(3, array_sum(array_column($chart['bars'], 'value')), $query);
-            $this->assertSame(Lead::count(), $chart['total'], $query);
-        }
-
-        $this->assertCount(1, collect($seen)->unique(fn ($c) => json_encode($c)),
-            'the pipeline snapshot changed with the range');
-    }
-
-    /** A soft-deleted lead leaves the snapshot, and its history leaves the chart. */
-    public function test_a_deleted_lead_leaves_both_stage_charts(): void
-    {
-        $lead = $this->lead(now()->subDays(10));
-        $this->service()->changeStage($lead, 'booking_done', ['booked_unit' => 'A-1']);
-
-        $this->assertSame(1, $this->charts('range=today')['byStage']['total']);
-        $this->assertSame(1, $this->card('today', 'booked'));
-
-        $this->actingAs($this->admin)->delete("/leads/{$lead->id}");
-
-        $charts = $this->charts('range=today');
-        $bars   = collect($charts['stageChanges'])->keyBy('key');
-
-        $this->assertSame(0, $charts['byStage']['total']);
-        $this->assertSame(0, $bars['booking_done']['value']);
-        $this->assertSame(0, $this->card('today', 'booked'));
-    }
-
-    /** Both stage charts render all nine stages, zeros included. */
-    public function test_both_stage_charts_are_zero_filled_across_every_stage(): void
-    {
-        $charts = $this->charts('from=2026-07-01&to=2026-07-05');
-
-        $this->assertCount(9, $charts['stageChanges']);
-        $this->assertCount(9, $charts['byStage']['bars']);
-        $this->assertSame(array_keys(config('crm.stages')), array_column($charts['stageChanges'], 'key'));
-        $this->assertSame(array_keys(config('crm.stages')), array_column($charts['byStage']['bars'], 'key'));
-        $this->assertSame(0, array_sum(array_column($charts['stageChanges'], 'value')));
+        $this->assertSame(1, $this->card('today', 'booked'), 'but one lead');
     }
 
     /* ---------------- to-dos by type ---------------- */
@@ -399,7 +516,7 @@ class DashboardRangeTest extends TestCase
 
         // deliberately against config order: site_visit is listed last
         foreach (['site_visit', 'site_visit', 'site_visit', 'whatsapp'] as $type) {
-            $this->todo($lead, now()->addDay(), $type);
+            $this->todo($lead, now()->subDay(), $type);
         }
 
         $bars = $this->charts('range=30')['byTodoType']['bars'];
@@ -412,15 +529,15 @@ class DashboardRangeTest extends TestCase
     }
 
     /**
-     * Its bars account for every pending to-do, and its header total is the
-     * bars — the same guarantee the pipeline snapshot's header carries.
+     * Its bars account for every to-do due today or earlier, and its header
+     * total is the bars — the same guarantee the stage chart's header carries.
      */
     public function test_the_todo_type_bars_total_every_pending_todo(): void
     {
         $lead = $this->lead(now()->subDays(3));
 
         foreach (['call', 'call', 'whatsapp', 'site_visit'] as $type) {
-            $this->todo($lead, now()->addDay(), $type);
+            $this->todo($lead, now()->subDay(), $type);
         }
 
         // a completed one is not outstanding work and must not be counted
@@ -439,10 +556,37 @@ class DashboardRangeTest extends TestCase
         $this->assertSame(Todo::where('status', 'pending')->count(), $chart['total']);
     }
 
-    /** Stock, like the pipeline: no range moves it. */
+    /**
+     * The chart and the Calls pending card read the same window: pending, due
+     * on or before today. They used to disagree — the card had the bound and
+     * the chart did not, so tomorrow's work inflated the chart's total while
+     * the card above it was right.
+     */
+    public function test_the_todo_type_chart_matches_the_calls_pending_card(): void
+    {
+        $lead = $this->lead(now()->subDays(3));
+
+        $this->todo($lead, now()->subDay(), 'call');            // overdue
+        $this->todo($lead, now()->setTime(23, 30), 'whatsapp'); // late today
+        $this->todo($lead, now()->addDay(), 'call');            // tomorrow — not yet work
+        $this->todo($lead, now()->addDays(9), 'site_visit');    // next week
+
+        $chart = $this->charts('range=30')['byTodoType'];
+        $bars  = collect($chart['bars'])->pluck('value', 'key');
+
+        $this->assertSame(1, $bars['call'], 'tomorrow\'s call is not outstanding work');
+        $this->assertSame(1, $bars['whatsapp']);
+        $this->assertSame(0, $bars['site_visit']);
+
+        $this->assertSame(2, $chart['total']);
+        $this->assertSame($this->card('30', 'pending'), $chart['total']);
+        $this->assertSame($this->card('today', 'pending'), $chart['total']);
+    }
+
+    /** The one chart no range moves, because it describes right now. */
     public function test_the_todo_type_chart_ignores_the_range_entirely(): void
     {
-        $this->todo($this->lead(now()->subDays(200)), now()->addDays(3), 'call');
+        $this->todo($this->lead(now()->subDays(200)), now()->subDays(3), 'call');
 
         $seen = [];
 
@@ -459,7 +603,7 @@ class DashboardRangeTest extends TestCase
     public function test_a_deleted_leads_todos_leave_the_type_chart(): void
     {
         $lead = $this->lead(now()->subDays(3));
-        $this->todo($lead, now()->addDay(), 'call');
+        $this->todo($lead, now()->subDay(), 'call');
 
         $this->assertSame(1, $this->charts('range=30')['byTodoType']['total']);
 
@@ -500,6 +644,29 @@ class DashboardRangeTest extends TestCase
     private function card(string $range, string $key)
     {
         return $this->cards("range=$range")[$key];
+    }
+
+    /** One stage chart's bars as stage => value, all nine keys present. */
+    private function bars(string $query, string $chart): array
+    {
+        return collect($this->charts($query)[$chart]['bars'])->pluck('value', 'key')->all();
+    }
+
+    /** The same, with the zeros dropped — what the chart actually draws. */
+    private function nonZero(string $query, string $chart): array
+    {
+        return array_filter($this->bars($query, $chart));
+    }
+
+    /**
+     * The three leads the two charts were reported against: all created today,
+     * one at each of three stages, none of them ever called.
+     */
+    private function stageCensusFixture(): void
+    {
+        foreach (['fresh', 'not_connected', 'site_visit_done'] as $stage) {
+            $this->lead(now())->forceFill(['stage' => $stage])->save();
+        }
     }
 
     private function user(string $role): User

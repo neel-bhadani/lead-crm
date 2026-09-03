@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { Link, router, usePage } from '@inertiajs/vue3'
 
 defineProps({ title: String, subtitle: String })
@@ -15,6 +15,20 @@ const nav = computed(() => [
 ])
 
 const logout = () => router.post(route('logout'))
+
+/*
+ | The header is stuck to the top, so it needs to read as a layer only once
+ | there is something underneath it. Flat at the top of the page, shadow after
+ | the first couple of pixels of scroll.
+ */
+const scrolled = ref(false)
+const onScroll = () => { scrolled.value = window.scrollY > 2 }
+
+onMounted(() => {
+  onScroll()
+  window.addEventListener('scroll', onScroll, { passive: true })
+})
+onUnmounted(() => window.removeEventListener('scroll', onScroll))
 </script>
 
 <template>
@@ -53,7 +67,22 @@ const logout = () => router.post(route('logout'))
 
     <!-- main -->
     <div class="lg:ml-60">
-      <header class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 py-4 sm:px-7">
+      <!--
+        Stuck to the top on every page, at z-20: over the page content, under
+        the drawer scrim (z-30), the drawer itself (z-40) and the modals (z-60),
+        so all three still cover it. Solid white, and a border that only shows
+        up once there is content passing underneath.
+
+        Below sm the action buttons wrap onto their own full-width row, which
+        would freeze about 130px at the top of a phone. Only the title row is
+        stuck there; the buttons live in the bar below and scroll away with the
+        page. From sm up they sit back on the title row and stick with it.
+      -->
+      <header
+        class="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-4 border-b
+               border-slate-200 bg-white px-4 py-4 transition-shadow duration-200 sm:px-7"
+        :class="{ 'shadow-sm': scrolled, 'max-sm:border-transparent': !scrolled && $slots.actions }"
+      >
         <div class="flex min-w-0 items-center gap-3">
           <button
             class="rounded-lg border border-slate-200 p-2 lg:hidden"
@@ -68,10 +97,22 @@ const logout = () => router.post(route('logout'))
             <p v-if="subtitle" class="truncate text-sm text-slate-500">{{ subtitle }}</p>
           </div>
         </div>
-        <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+        <div class="hidden w-full flex-wrap items-center gap-2 sm:flex sm:w-auto">
           <slot name="actions" />
         </div>
       </header>
+
+      <!--
+        The same actions below sm, where they are not part of the stuck header.
+        Only one of the two copies is ever rendered on screen: this one is
+        display:none from sm up, the one in the header is display:none below it,
+        which takes the popovers inside them along with it.
+      -->
+      <div v-if="$slots.actions"
+           class="flex w-full flex-wrap items-center gap-2 border-b border-slate-200 bg-white
+                  px-4 pb-4 sm:hidden">
+        <slot name="actions" />
+      </div>
 
       <main class="mx-auto max-w-[1500px] px-4 pb-12 pt-5 sm:px-7">
         <slot />

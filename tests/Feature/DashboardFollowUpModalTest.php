@@ -12,20 +12,23 @@ use Illuminate\Support\Carbon;
 use Tests\TestCase;
 
 /**
- * The sign-in notice: what is owed today, said once, to the right person.
+ * The sign-in modal: what is owed today, said once, to the right person.
  *
  * Three things are being asserted here and they are separable. Who sees what
  * is scopeForUser() and nothing else — the front end is never sent a row it
- * should not have. What counts is the Pending follow-ups card's population,
- * everything still open that was due today or earlier. And "once per session"
- * is a server-side flag, so a dismissed notice is not hidden on the next visit,
- * it is not sent.
+ * should not have. What counts is the Calls pending card's population,
+ * everything still open that was due today or earlier, in one list. And "once
+ * per session" is a server-side flag, so a dismissed modal is not hidden on the
+ * next visit, it is not sent.
  *
  * @see \App\Http\Controllers\DashboardController::todayDigest()
  */
-class DashboardFollowUpNoticeTest extends TestCase
+class DashboardFollowUpModalTest extends TestCase
 {
     use RefreshDatabase;
+
+    /** Minutes past the fixed test now, so no two fixtures share a timestamp. */
+    private int $minute = 0;
 
     private User $admin;
     private User $telecaller;
@@ -58,15 +61,23 @@ class DashboardFollowUpNoticeTest extends TestCase
         $digest = $this->digest($this->admin);
 
         $this->assertSame(7, $digest['total']);
-        $this->assertSame(
-            [['name' => 'Amit', 'count' => 4], ['name' => 'Priya', 'count' => 3]],
-            $digest['groups'],
-            'the breakdown is ordered by workload and totals the heading'
-        );
+        $this->assertSame(['Priya Shah', 'Amit Patel'], array_column($digest['groups'], 'name'),
+            'the oldest outstanding call heads the list, not the biggest pile');
+        $this->assertSame([3, 4], array_column($digest['groups'], 'count'));
         $this->assertSame(7, array_sum(array_column($digest['groups'], 'count')));
+
+        // and the rows really are under the right person
+        $this->assertCount(3, $digest['groups'][0]['rows']);
+        $this->assertCount(4, $digest['groups'][1]['rows']);
+        $this->assertCount(7, $this->rows($digest));
     }
 
-    /** A telecaller gets their own rows and no breakdown — it would be one line. */
+    /**
+     * A telecaller gets their own rows in one unnamed group: a heading would
+     * be their own name repeated down a list that is entirely theirs.
+     *
+     * The count proves the scoping. Seven tasks exist; three come back.
+     */
     public function test_a_telecaller_sees_only_their_own(): void
     {
         $this->tasks($this->telecaller, 3);
@@ -75,8 +86,15 @@ class DashboardFollowUpNoticeTest extends TestCase
         $digest = $this->digest($this->telecaller);
 
         $this->assertSame(3, $digest['total']);
-        $this->assertSame([], $digest['groups']);
-        $this->assertSame(['Priya Shah'], array_unique(array_column($digest['rows'], 'owner')));
+        $this->assertCount(1, $digest['groups']);
+        $this->assertNull($digest['groups'][0]['name'], 'an own-list group carries no heading');
+        $this->assertCount(3, $this->rows($digest));
+
+        // every row is on a lead assigned to them, so nothing else leaked in
+        $mine = Lead::where('assigned_to', $this->telecaller->id)->pluck('mobile_number')->all();
+        foreach ($this->rows($digest) as $row) {
+            $this->assertContains($row['mobile'], $mine);
+        }
     }
 
     public function test_a_salesperson_sees_only_their_own(): void
@@ -87,8 +105,14 @@ class DashboardFollowUpNoticeTest extends TestCase
         $digest = $this->digest($this->salesperson);
 
         $this->assertSame(4, $digest['total']);
-        $this->assertSame([], $digest['groups']);
-        $this->assertSame(['Amit Patel'], array_unique(array_column($digest['rows'], 'owner')));
+        $this->assertCount(1, $digest['groups']);
+        $this->assertNull($digest['groups'][0]['name']);
+        $this->assertCount(4, $this->rows($digest));
+
+        $mine = Lead::where('assigned_to', $this->salesperson->id)->pluck('mobile_number')->all();
+        foreach ($this->rows($digest) as $row) {
+            $this->assertContains($row['mobile'], $mine);
+        }
     }
 
     /* ---------------- what counts ---------------- */
@@ -100,21 +124,26 @@ class DashboardFollowUpNoticeTest extends TestCase
     }
 
     /**
-     * Yesterday's uncalled lead is the row this notice most needs to surface,
-     * so the cut is "due today or earlier", not "due today".
+     * Yesterday's uncalled lead is the row this modal most needs to surface, so
+     * the cut is "due today or earlier", not "due today".
+     *
+     * One list, not two. `earlier` exists only so the row can print its date;
+     * both rows sit in the same group, in time order.
      */
     public function test_tasks_from_earlier_days_are_included_and_come_first(): void
     {
         $lead = $this->lead($this->telecaller);
 
         $this->todo($lead, Carbon::parse('2026-09-02 16:00'));   // later today
-        $this->todo($lead, Carbon::parse('2026-08-30 10:00'));   // three days late
+        $this->todo($lead, Carbon::parse('2026-08-30 10:00'));   // three days back
 
         $digest = $this->digest($this->telecaller);
+        $rows   = $this->rows($digest);
 
         $this->assertSame(2, $digest['total']);
-        $this->assertTrue($digest['rows'][0]['overdue'], 'the oldest is listed first');
-        $this->assertFalse($digest['rows'][1]['overdue']);
+        $this->assertCount(1, $digest['groups'], 'an earlier day is not a second bucket');
+        $this->assertTrue($rows[0]['earlier'], 'the oldest is listed first');
+        $this->assertFalse($rows[1]['earlier']);
     }
 
     /** Tomorrow is not today's problem, and a closed task is nobody's. */
@@ -142,26 +171,63 @@ class DashboardFollowUpNoticeTest extends TestCase
     }
 
     /**
-     * The list is capped; the count is not. The heading has to be the real
-     * total or the button beside it is a lie about what is behind it.
+     * The list is capped at ten; the count is not. The line at the top has to
+     * be the real total, and the shortfall is stated rather than left for the
+     * reader to notice.
      */
-    public function test_a_long_list_is_capped_but_the_count_is_the_real_total(): void
+    public function test_a_long_list_is_capped_and_the_remainder_is_stated(): void
     {
-        $this->tasks($this->telecaller, 12);
+        $this->tasks($this->telecaller, 14);
 
         $digest = $this->digest($this->telecaller);
 
-        $this->assertSame(12, $digest['total']);
-        $this->assertCount(5, $digest['rows']);
+        $this->assertSame(14, $digest['total'], 'the count is everything owed');
+        $this->assertSame(10, $digest['shown']);
+        $this->assertSame(4, $digest['more'], '"and 4 more"');
+        $this->assertCount(10, $this->rows($digest));
     }
 
-    /** Every row carries what the panel prints, and nothing it does not. */
+    /** The cap is across the whole modal, not ten rows per person. */
+    public function test_the_cap_is_across_every_group(): void
+    {
+        $this->tasks($this->telecaller, 8);
+        $this->tasks($this->salesperson, 8);
+
+        $digest = $this->digest($this->admin);
+
+        $this->assertSame(16, $digest['total']);
+        $this->assertSame(10, $digest['shown']);
+        $this->assertSame(6, $digest['more']);
+        $this->assertCount(10, $this->rows($digest));
+
+        // the per-person count is the whole workload, not what survived the cap
+        $this->assertSame([8, 8], array_column($digest['groups'], 'count'));
+        $this->assertSame([8, 2], array_map(fn($g) => count($g['rows']), $digest['groups']));
+    }
+
+    /** Nobody appears as a heading with nothing listed under it. */
+    public function test_no_group_comes_back_empty(): void
+    {
+        $this->tasks($this->telecaller, 12);
+        $this->tasks($this->salesperson, 3);
+
+        $digest = $this->digest($this->admin);
+
+        $this->assertSame(['Priya Shah'], array_column($digest['groups'], 'name'),
+            'the salesperson has no row inside the cap, so no heading either');
+
+        foreach ($digest['groups'] as $group) {
+            $this->assertNotEmpty($group['rows']);
+        }
+    }
+
+    /** Every row carries what the modal prints, and nothing it does not. */
     public function test_each_row_carries_the_name_mobile_time_and_stage(): void
     {
         $lead = $this->lead($this->telecaller);
         $this->todo($lead, Carbon::parse('2026-09-02 16:00'));
 
-        $row = $this->digest($this->telecaller)['rows'][0];
+        $row = $this->rows($this->digest($this->telecaller))[0];
 
         $this->assertSame('Meera Rani Sharma', $row['name']);
         $this->assertSame($lead->mobile_number, $row['mobile']);
@@ -172,7 +238,7 @@ class DashboardFollowUpNoticeTest extends TestCase
     /* ---------------- once per session ---------------- */
 
     /** Shown on arrival, gone on every later visit in the same session. */
-    public function test_the_notice_is_sent_once_per_session(): void
+    public function test_the_modal_is_sent_once_per_session(): void
     {
         $this->tasks($this->telecaller, 2);
 
@@ -183,15 +249,16 @@ class DashboardFollowUpNoticeTest extends TestCase
 
     /**
      * Dismissing is a client-side hide over a server-side fact: by the time the
-     * user closes the panel the session has already been marked, so the next
-     * dashboard visit does not send it. Nothing has to be posted for that, and
-     * this is the assertion that says so — no dismiss request is made here.
+     * user closes the modal — Escape, the close button, the overlay, or
+     * following the footer link — the session has already been marked, so the
+     * next dashboard visit does not send it. Nothing has to be posted for that,
+     * and this is the assertion that says so: no dismiss request is made here.
      */
-    public function test_a_dismissed_notice_does_not_come_back_within_the_session(): void
+    public function test_a_dismissed_modal_does_not_come_back_within_the_session(): void
     {
         $this->tasks($this->telecaller, 2);
 
-        $this->digest($this->telecaller);            // shown, and dismissed on the page
+        $this->digest($this->telecaller);            // shown, and closed on the page
 
         // more work arrives; it is still the same session, so it still waits
         $this->tasks($this->telecaller, 5);
@@ -212,11 +279,11 @@ class DashboardFollowUpNoticeTest extends TestCase
     }
 
     /**
-     * "Once per session" is about the notice, not about the check. A user who
+     * "Once per session" is about the modal, not about the check. A user who
      * signs in to an empty list at nine should still be told about the task
      * that lands at ten.
      */
-    public function test_an_empty_check_does_not_use_up_the_notice(): void
+    public function test_an_empty_check_does_not_use_up_the_modal(): void
     {
         $this->assertNull($this->digest($this->telecaller));
 
@@ -226,11 +293,11 @@ class DashboardFollowUpNoticeTest extends TestCase
     }
 
     /**
-     * Logging a call reloads cards, charts and followUps. The notice is not in
+     * Logging a call reloads cards, charts and followUps. The modal is not in
      * that list, so its closure is never invoked and the one showing this
      * session was owed is not burned by a background refresh.
      */
-    public function test_a_partial_reload_neither_sends_nor_spends_the_notice(): void
+    public function test_a_partial_reload_neither_sends_nor_spends_the_modal(): void
     {
         $this->tasks($this->telecaller, 2);
 
@@ -241,7 +308,7 @@ class DashboardFollowUpNoticeTest extends TestCase
 
         $partial->assertJsonMissingPath('props.todayDigest');
 
-        $this->assertNotNull($this->digest($this->telecaller), 'the notice was still owed');
+        $this->assertNotNull($this->digest($this->telecaller), 'the modal was still owed');
     }
 
     /* ---------------- helpers ---------------- */
@@ -266,12 +333,24 @@ class DashboardFollowUpNoticeTest extends TestCase
             ->json('props.todayDigest');
     }
 
-    /** $n tasks due today, on $n leads, all belonging to $owner. */
+    /**
+     * $n tasks due today, on $n leads, all belonging to $owner.
+     *
+     * Every task gets its own minute, across calls as well as within one. Rows
+     * come back ordered by scheduled_at and the groups follow that order, so
+     * fixtures sharing a timestamp would leave the order to the database.
+     */
     private function tasks(User $owner, int $n): void
     {
         for ($i = 0; $i < $n; $i++) {
-            $this->todo($this->lead($owner), now()->copy()->addMinutes($i));
+            $this->todo($this->lead($owner), now()->copy()->addMinutes(++$this->minute));
         }
+    }
+
+    /** Every listed row, flattened out of its group. */
+    private function rows(array $digest): array
+    {
+        return collect($digest['groups'])->flatMap(fn($g) => $g['rows'])->all();
     }
 
     private function lead(User $owner): Lead

@@ -18,8 +18,20 @@ class LeadFollowUpService
     public function __construct(private FollowUpScheduler $scheduler) {}
 
     /**
-     * Called when a lead is created. Gives it its first task immediately,
-     * because a lead must never exist without a pending to-do.
+     * Called when a lead is created. Gives it its first task, because a lead
+     * must never exist without a pending to-do.
+     *
+     * "Its first task" used to mean "right now, pulled inside working hours",
+     * which was right while every new lead started at `fresh` — the configured
+     * interval for that stage is 0, so now() and now()+0h are the same moment
+     * and nothing looked wrong. Once source defaults started creating leads
+     * directly at `details_shared` or `site_visit_done`, that hardcoded now()
+     * was silently ignoring 48 and 24 hours of configuration: a lead typed in
+     * at 2:03 PM as already visited asked for a call back at 2:03 PM.
+     *
+     * The stage decides the interval here exactly as it does when a call is
+     * logged, and it decides it in the same place — next(), which is the only
+     * thing in the application allowed to answer "when next".
      */
     public function onLeadCreated(Lead $lead): void
     {
@@ -49,18 +61,20 @@ class LeadFollowUpService
                 $this->recordStageChange($lead, $lead->stage, 'Lead added at this stage.');
             }
 
-            // booked or lost on arrival: nothing left to schedule
-            if ($lead->isTerminal()) {
-                return;
-            }
+            /*
+             | next() answers the whole question, and the "no task" cases come
+             | back as null rather than being re-tested here: a terminal stage
+             | (booked or lost on arrival — nothing left to schedule) and an
+             | exhausted retry ladder. It has already pulled the result inside
+             | working hours, so a lead added at 6 PM is a call to make in the
+             | morning, and one added at 6 PM as already visited is a call to
+             | make the morning after that.
+             */
+            $when = $this->scheduler->next($lead, $lead->stage);
 
-            // system-generated like any other, so it gets the same treatment:
-            // a lead added at 9 PM is a call to make in the morning
-            $this->createTodo(
-                $lead,
-                $this->scheduler->withinWorkingHours(now()),
-                $lead->stage
-            );
+            if ($when) {
+                $this->createTodo($lead, $when, $lead->stage);
+            }
         });
     }
 
@@ -266,7 +280,7 @@ class LeadFollowUpService
         Todo::create([
             'lead_id'             => $lead->id,
             'assigned_to'         => $lead->assigned_to,
-            'created_by'          => AUth::id(),
+            'created_by'          => Auth::id(),
             'scheduled_at'        => $when,
             'type'                => $stage === config('crm.handover_stage') ? 'site_visit' : 'call',
             'status'              => 'pending',

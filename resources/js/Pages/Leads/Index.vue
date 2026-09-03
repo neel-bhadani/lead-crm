@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, computed } from 'vue'
+import { reactive, computed, ref } from 'vue'
 import { Head, Link, router, usePage } from '@inertiajs/vue3'
 import AppLayout from '@/Layouts/AppLayout.vue'
 import StageBadge from '@/Components/StageBadge.vue'
@@ -7,9 +7,16 @@ import LeadFormModal from '@/Components/LeadFormModal.vue'
 import LeadViewModal from '@/Components/LeadViewModal.vue'
 import ConfirmDialog from '@/Components/ConfirmDialog.vue'
 import AssignedTo from '@/Components/AssignedTo.vue'
+import FilterChips from '@/Components/FilterChips.vue'
 import { useFilterVisit, useDebouncedFilters } from '@/composables/useFilterVisit.js'
 
-const props = defineProps({ leads: Object, filters: Object, options: Object })
+const props = defineProps({
+  leads: Object,
+  filters: Object,
+  options: Object,
+  // the stage breakdown of this list, every filter applied except stage
+  stageCounts: Object,
+})
 
 const role = computed(() => usePage().props.auth.user.role)
 const canEdit = computed(() => role.value !== 'telecaller')
@@ -19,13 +26,15 @@ const isAdmin = computed(() => role.value === 'admin')
 
 const f = reactive({
   search: props.filters.search ?? '',
+  // set by the chips now, not by a dropdown
   stage: props.filters.stage ?? '',
   project_id: props.filters.project_id ?? '',
   source: props.filters.source ?? '',
   assigned_to: props.filters.assigned_to ?? '',
 
-  // no control on the page — a hand-typed range is carried back out so the
-  // reset below does not silently drop it on the next keystroke
+  // '' is All time. 'custom' is a state of this control only — the server
+  // stores the pair of dates and derives the word on the way back out
+  range: props.filters.range ?? '',
   from: props.filters.from ?? '',
   to: props.filters.to ?? '',
 })
@@ -33,12 +42,50 @@ const f = reactive({
 const { visit } = useFilterVisit(route('leads.index'))
 
 /*
+ | A preset and a custom pair are alternatives, so only one of them is ever on
+ | the wire. Without this, switching from a custom range back to "Last 7 days"
+ | would still carry the two dates along, and the server — which reads a pair as
+ | custom whatever else it is told — would keep showing the custom range under a
+ | control that said something else.
+ |
+ | 'custom' itself is never sent. It is not a value the server stores; the dates
+ | are, and it infers the word from them.
+ */
+const payload = () => {
+  const custom = f.range === 'custom'
+
+  return { ...f, range: custom ? '' : f.range, from: custom ? f.from : '', to: custom ? f.to : '' }
+}
+
+/*
+ | The same rules the server applies, so an impossible range is never sent.
+ |
+ | Both dates are ISO yyyy-mm-dd, so they compare correctly as plain strings and
+ | none of this has to build a Date. That matters: the browser may be in any
+ | timezone, and `options.today` is today in IST as the server sees it.
+ */
+const dateError = computed(() => {
+  if (f.range !== 'custom' || !f.from || !f.to) return ''
+  if (f.from > f.to) return 'From must not be after To.'
+  if (f.to > props.options.today) return 'To must not be in the future.'
+  return ''
+})
+
+/*
  | Every field the page owns goes out on every visit, and reset=1 goes with
  | them, so the request is the whole instruction: what is named is on, what is
  | missing is off. The empty ones are dropped before it leaves — see
  | withoutEmpty() in the composable for why the two belong together.
+ |
+ | A half-typed custom range sends nothing at all. The error is already on
+ | screen; a visit on top of it would either reload the same list for no reason
+ | or apply a range the user has not finished choosing.
  */
-const push = () => visit({ reset: 1, ...f })
+const push = () => {
+  if (f.range === 'custom' && (!f.from || !f.to || dateError.value)) return
+
+  visit({ reset: 1, ...payload() })
+}
 
 const filters = useDebouncedFilters(f, push)
 
@@ -47,7 +94,34 @@ const clearFilters = () => {
   filters.cancel()
 
   // every field is empty now, so this sends reset=1 and nothing else: the
-  // session entry is wiped and nothing survives to reappear on the next visit
+  // session entry is wiped and nothing survives to reappear on the next visit.
+  // That is the stage chip back to All and the dates back to All time too.
+  push()
+}
+
+/* ---------------- stage chips ---------------- */
+
+/*
+ | All, then one per configured stage, in config order.
+ |
+ | The counts are the server's — one grouped query over this same filtered list
+ | with the stage clause left out — so clicking a chip re-filters the table
+ | without moving the numbers on the chips beside it. "All" is summed from the
+ | others on that side, so the row can never fail to add up.
+ |
+ | Colours come from config through options.stageColors, the same map StageBadge
+ | reads, so a chip and a badge for one stage are the same colour. All has none:
+ | it is not a stage, and it is styled from the palette's slate instead.
+ */
+const chips = computed(() => [
+  { key: '', label: 'All', value: props.stageCounts.total, color: null },
+  ...props.stageCounts.bars.map(bar => ({ ...bar, color: props.options.stageColors[bar.key] })),
+])
+
+/** Clicking the active chip clears the filter, exactly as All does. */
+const setStage = key => {
+  filters.silently(() => { f.stage = f.stage === key ? '' : key })
+  filters.cancel()
   push()
 }
 
@@ -98,31 +172,70 @@ const ageClass = d => d === null ? 'text-slate-400'
 
     <div class="card overflow-hidden">
 
-      <!-- filters -->
+      <!--
+        Filters. Everything is full width and stacked below md, and inline from
+        768 up — six controls do not fit on one line until about 1100px, so
+        above md they wrap onto a second row rather than being squeezed to
+        widths nobody can read a project name in.
+
+        No stage dropdown: the chips below are the stage filter now, and having
+        both would be two controls for one piece of state.
+      -->
       <div class="flex flex-wrap gap-2 border-b border-slate-100 p-3 sm:p-4">
         <input v-model="f.search" type="search" placeholder="Search name, mobile or email"
-               class="w-full sm:!w-64" />
-        <select v-model="f.stage" class="w-full sm:!w-40">
-          <option value="">All stages</option>
-          <option v-for="(l, k) in options.stages" :key="k" :value="k">{{ l }}</option>
-        </select>
-        <select v-model="f.project_id" class="w-full sm:!w-44">
+               class="w-full md:!w-64" />
+        <select v-model="f.project_id" class="w-full md:!w-44">
           <option value="">All projects</option>
           <option v-for="p in options.projects" :key="p.id" :value="p.id">{{ p.name }}</option>
         </select>
-        <select v-model="f.source" class="w-full sm:!w-40">
+        <select v-model="f.source" class="w-full md:!w-40">
           <option value="">All sources</option>
           <option v-for="(l, k) in options.sources" :key="k" :value="k">{{ l }}</option>
         </select>
-        <select v-if="isAdmin" v-model="f.assigned_to" class="w-full sm:!w-44"
+        <select v-if="isAdmin" v-model="f.assigned_to" class="w-full md:!w-44"
                 aria-label="Assigned to">
           <option value="">Assigned to</option>
           <option v-for="u in options.users" :key="u.id" :value="u.id">
             {{ u.first_name }} {{ u.last_name }}
           </option>
         </select>
-        <button class="btn-ghost w-full sm:w-auto" @click="clearFilters">Clear</button>
+
+        <!-- on leads.created_at; the server owns the boundaries -->
+        <select v-model="f.range" class="w-full md:!w-36" aria-label="Date added">
+          <option value="">All time</option>
+          <option value="today">Today</option>
+          <option value="7">Last 7 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="custom">Custom…</option>
+        </select>
+
+        <!--
+          Only when it is asked for, and nothing is applied until both dates are
+          set and agree with each other. `max` is today in IST from the server,
+          not the browser's idea of today.
+        -->
+        <template v-if="f.range === 'custom'">
+          <input v-model="f.from" type="date" :max="options.today"
+                 class="w-full md:!w-40" aria-label="From date" />
+          <input v-model="f.to" type="date" :min="f.from" :max="options.today"
+                 class="w-full md:!w-40" aria-label="To date" />
+        </template>
+
+        <button class="btn-ghost w-full md:w-auto" @click="clearFilters">Clear</button>
+
+        <!-- w-full so the complaint gets a line of its own rather than
+             elbowing a control off the row it belongs to -->
+        <p v-if="dateError" class="w-full text-xs font-medium text-rose-700" role="alert">
+          {{ dateError }}
+        </p>
       </div>
+
+      <!--
+        Stage chips: the stage filter, and the stage breakdown, in one control.
+        The strip itself is FilterChips, shared with the To-do page so the two
+        cannot drift apart.
+      -->
+      <FilterChips :chips="chips" :active="f.stage" @select="setStage" />
 
       <!-- empty -->
       <div v-if="!leads.data.length" class="px-5 py-14 text-center text-sm text-slate-500">
