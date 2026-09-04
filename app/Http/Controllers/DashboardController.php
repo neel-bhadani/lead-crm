@@ -79,18 +79,18 @@ class DashboardController extends Controller
              */
             'cards'   => fn() => $this->cards($user, $from, $to),
             /*
-             | Four charts, in the order the page draws them.
+             | Three charts, in the order the page draws them.
              |
              | The first two are the same query — stagesByLead(), leads grouped
              | by the stage each one is at now — asked twice, once without a
              | window and once with the selected one. That is the only
-             | difference between them, and it is deliberate: read side by side
-             | they say where the whole book of enquiries stands and which part
-             | of it arrived in this period.
+             | difference between them, and it is deliberate: read one against
+             | the other they say where the whole book of enquiries stands and
+             | which part of it arrived in this period.
              |
-             | Two of the four ignore the picker, and for the one reason
-             | anything here is allowed to: they describe a standing total
-             | rather than a period. The notes on both cards say so.
+             | One of the three ignores the picker, and for the one reason
+             | anything here is allowed to: it describes a standing total rather
+             | than a period. The note on that card says so.
              */
             'charts'  => fn() => [
                 // every lead, grouped by leads.stage. No window, ever.
@@ -99,8 +99,6 @@ class DashboardController extends Controller
                 'stagesInPeriod' => $this->stagesByLead($user, $from, $to),
                 // leads.created_at again, split by where they came from
                 'bySource'       => $this->bySource($user, $from, $to),
-                // the other exception: work outstanding right now
-                'byTodoType'     => $this->byTodoType($user),
             ],
             /*
              | The sign-in notice. A closure for the same reason the rest are,
@@ -461,65 +459,6 @@ class DashboardController extends Controller
             ])
             ->filter(fn($row) => $row['value'] > 0)
             ->values()->all();
-    }
-
-    /**
-     * The work still waiting, split by the kind of work it is. One of the two
-     * charts no range can move — the all-time stage census is the other.
-     *
-     * It ignores the picker for the single reason anything on this page is
-     * allowed to — it describes right now rather than a period. A pending
-     * to-do is a thing that has not happened yet, so "pending to-dos created
-     * last week" answers nothing anyone asks. The card and the note both say
-     * so on the page.
-     *
-     * Same window as the Calls pending card, and deliberately the same
-     * expression: everything pending that was due on or before today. The card
-     * had that bound and the chart did not, so two to-dos scheduled for
-     * tomorrow sat in the chart's total while the card above it counted only
-     * one — a card and a chart disagreeing about the same rows, which is the
-     * exact failure the rest of this class is arranged to prevent.
-     *
-     * forUser(), not visibleTo(): this is a work list, so it is scoped by who
-     * owns the task, exactly as the two panels and the Pending card are.
-     * hasLead() for the same reason they use it — a soft-deleted lead's rows
-     * are not work anybody is going to do.
-     *
-     * Zero-filled across every configured type, so all four bars render even
-     * when nothing of that kind is outstanding. The labels come from
-     * config('crm.todo_types'); no type is spelled out here or in the Vue.
-     *
-     * Ordered biggest first. Config order put Call — which is nearly all of the
-     * backlog — next to three near-empty bars in whatever sequence the config
-     * file happened to list them, so the one bar worth reading was not
-     * necessarily the one the eye landed on. Sorting is not filtering: every
-     * type still has a bar, zeros included, and PHP's sort is stable, so the
-     * ties among the zeros stay in config order rather than shuffling between
-     * page loads.
-     *
-     * @return array{total: int, bars: list<array{key: string, label: string, value: int}>}
-     */
-    private function byTodoType($user): array
-    {
-        $counts = Todo::forUser($user)->hasLead()->pending()
-            ->where('scheduled_at', '<=', today()->endOfDay())
-            ->selectRaw('type, count(*) as total')
-            ->groupBy('type')
-            ->pluck('total', 'type');
-
-        $bars = collect(config('crm.todo_types'))
-            ->map(fn($label, $key) => [
-                'key'   => $key,
-                'label' => $label,
-                'value' => (int) ($counts[$key] ?? 0),
-            ])
-            ->sortByDesc('value')
-            ->values()->all();
-
-        // summed from the bars, like byStage(): the header cannot then disagree
-        // with the chart underneath it — and the sum is the Calls pending card,
-        // out of the same window
-        return ['total' => array_sum(array_column($bars, 'value')), 'bars' => $bars];
     }
 
     /* ---------------- helpers ---------------- */

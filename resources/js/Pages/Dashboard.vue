@@ -121,7 +121,7 @@ const narrow = ref(window.innerWidth < NARROW_BELOW)
 /*
  | Debounced, because crossing the breakpoint is the one thing here that does
  | rebuild a chart. A drag that wobbles either side of 860 would otherwise
- | rebuild all four on every crossing; this waits for the drag to settle.
+ | rebuild all three on every crossing; this waits for the drag to settle.
  */
 let widthTimer
 const onWidthChange = () => {
@@ -180,39 +180,137 @@ const tick = { color: '#64748b', font: { size: 11 } }
 const grid = { color: '#eef2f3' }
 
 /*
- | Both stage charts, from one factory.
+ | The two stage charts. Same nine stages in the same order, same colours out
+ | of config('crm.stage_colors') — a stage is the colour it is everywhere in
+ | the app, badges included — and the same server query, one with a date window
+ | and one without; see DashboardController::stagesByLead().
  |
- | They are deliberately identical to look at — same nine stages in the same
- | order, same colours, same horizontal bars — because the point of the pair is
- | that they can be read against each other: the second chart's bars are a
- | subset of the first's, so the pair reads as "of everything standing here,
- | this much arrived in the period". They are the same server query too, one
- | with a date window and one without; see DashboardController::stagesByLead().
+ | They are deliberately not the same shape. The census has the top row to
+ | itself and stays horizontal; the period chart shares the row underneath and
+ | is vertical. Drawn as a matched pair they read as one chart drawn twice, and
+ | the second gets taken for a redrawing of the first rather than for the
+ | different question it is: "where does everything stand" against "what came
+ | in during these dates". The forms differ so the questions do.
  */
-const stageBars = rows => ({
-  type: 'bar',
-  data: {
-    labels: rows.map(r => r.label),
-    datasets: [{
-      data: rows.map(r => r.value),
-      backgroundColor: rows.map(r => r.color),
-      borderRadius: 4, barThickness: narrow.value ? 12 : 15,
-    }],
-  },
-  options: {
-    indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-    plugins: { legend: { display: false } },
-    scales: { x: { grid, ticks: { ...tick, precision: 0 }, beginAtZero: true },
-              y: { grid: { display: false }, ticks: tick } },
-  },
+
+/*
+ | The width of the census's label column, as a floor rather than a measurement.
+ |
+ | Chart.js sizes a category axis to whatever its longest tick happens to need,
+ | so left alone the x the bars begin at is a function of the text beside them —
+ | it moves with the font the browser resolves, and it is not a number this file
+ | knows. A floor pins the nine stages into one left column and the nine bars
+ | onto one starting edge.
+ |
+ | Math.max, not a bare assignment: a floor can only ever add room, so no label
+ | can be squeezed into a column too narrow to hold it. On a phone the floor is
+ | lower, because there the column is competing with the bars for a third of the
+ | width rather than a tenth.
+ */
+const STAGE_LABEL_COL = 148
+const STAGE_LABEL_COL_NARROW = 116
+
+/*
+ | Every lead, at the stage it stands at now. The date picker cannot move it.
+ |
+ | Horizontal, and now across the full width of the page: a bar has the whole
+ | row to run along, so it can afford to be a little thicker than it was when
+ | this shared a row with the chart below it.
+ */
+const allStagesChart = computed(() => {
+  const rows = props.charts.stagesAllTime.bars
+
+  return {
+    type: 'bar',
+    data: {
+      labels: rows.map(r => r.label),
+      datasets: [{
+        data: rows.map(r => r.value),
+        backgroundColor: rows.map(r => r.color),
+        borderRadius: 4, barThickness: narrow.value ? 14 : 20,
+      }],
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid, ticks: { ...tick, precision: 0 }, beginAtZero: true },
+        y: {
+          grid: { display: false },
+          ticks: tick,
+          afterFit: scale => {
+            scale.width = Math.max(
+              scale.width,
+              narrow.value ? STAGE_LABEL_COL_NARROW : STAGE_LABEL_COL,
+            )
+          },
+        },
+      },
+    },
+  }
 })
 
-// Every lead, at the stage it stands at now. The date picker cannot move it.
-const allStagesChart = computed(() => stageBars(props.charts.stagesAllTime.bars))
+/*
+ | The same census, narrowed to the leads created inside the range. Its bars
+ | sum to the New enquiries card.
+ |
+ | Vertical, at half the width, with nine stage names to fit along the bottom.
+ | Laid flat the longest of them is wider than the slot it gets — about 110px
+ | of text in something between 30 and 55 — so they are laid at a fixed angle
+ | instead. Rotation is the one answer here that does not depend on how long
+ | the words happen to be: the spacing a rotated label needs is set by its line
+ | height and the angle, not by its length, so nine of them clear each other at
+ | every width this card is ever given, and the axis simply grows downwards for
+ | the longest one rather than clipping it.
+ |
+ | Abbreviating them was the alternative and is worse: a stage's name is
+ | config('crm.stages'), the same string the badges and the filters show, and
+ | shortening it here would put a second vocabulary for the nine stages in this
+ | file for one axis to use.
+ */
+const periodStagesChart = computed(() => {
+  const rows = props.charts.stagesInPeriod.bars
 
-// The same census, narrowed to the leads created inside the range. Its bars
-// sum to the New enquiries card.
-const periodStagesChart = computed(() => stageBars(props.charts.stagesInPeriod.bars))
+  return {
+    type: 'bar',
+    data: {
+      labels: rows.map(r => r.label),
+      datasets: [{
+        data: rows.map(r => r.value),
+        backgroundColor: rows.map(r => r.color),
+        borderRadius: 4, maxBarThickness: narrow.value ? 22 : 30,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: {
+            ...tick,
+            // a shade smaller than the rest of the page's ticks, which is what
+            // buys the angled labels their room back
+            font: { size: 10 },
+            /*
+             | Both pinned, and that is the point of setting them.
+             |
+             | autoSkip drops every other label the moment the axis is short of
+             | room, and a stage missing from the axis reads as a stage with
+             | nothing in it — the exact thing zero-filling the bars is there to
+             | prevent. And left to choose an angle, Chart.js straightens the
+             | labels whenever it decides they fit and lays them back down when
+             | they do not, so the axis would change shape as the range changed
+             | the numbers beside it.
+             */
+            autoSkip: false, minRotation: 45, maxRotation: 45,
+          },
+        },
+        y: { grid, ticks: { ...tick, precision: 0 }, beginAtZero: true },
+      },
+    },
+  }
+})
 
 /*
  | The note under "Where all enquiries stand", and it carries the count.
@@ -236,17 +334,19 @@ const PALETTE = ['#2F6FB0', '#0F766E', '#8145A8', '#C2711A', '#5B58B8', '#1E7A45
  | Where the doughnut's legend goes, decided by the width of the card it is in
  | rather than the width of the window.
  |
- | Those are not the same question and the window cannot answer it. The chart
- | grid is one column up to 1280 and two above it, so a 1024-wide window gives
- | this card 728px and a 1440-wide one gives it 564px — the wider window is the
- | one where a legend down the right-hand side was eating a quarter of the
- | plot. No window breakpoint can express that. A ResizeObserver on a wrapper
- | around the card measures the thing that actually decides, at every width,
- | with no grid arithmetic to keep in step.
+ | Those are not the same question and the window cannot answer it, and it can
+ | answer it even less now this card is half a row from lg up rather than a
+ | whole one below 1280. A 1024-wide window leaves it 356px and a 1440-wide one
+ | 564px, so at both of those the legend belongs underneath — but a 1900-wide
+ | monitor gives the same half-row card 714px, where it belongs beside. No
+ | window breakpoint can express that. A ResizeObserver on a wrapper around the
+ | card measures the thing that actually decides, at every width, with no grid
+ | arithmetic to keep in step — which is why moving the grid to two columns at
+ | lg needed nothing changed here.
  |
- | 600px is the line: below it the chart is sharing its row and the legend goes
- | underneath, above it the card has a row to itself (or the monitor is wide
- | enough that two of them are still roomy) and the legend sits beside.
+ | 600px is the line: below it the plot is too narrow to give a quarter of
+ | itself away to a column of labels, so they go underneath; above it there is
+ | room for both side by side.
  |
  | The ref holds the answer, not the width: assigning the same boolean is a
  | no-op in Vue, so the config is rebuilt only when the threshold is crossed
@@ -309,56 +409,6 @@ const sourceChart = computed(() => {
       },
     },
   }
-})
-
-/*
- | STOCK: what is still to be done, by kind of task.
- |
- | Vertical bars, where the two stage charts are horizontal. The form is doing
- | work: this chart sits next to the source doughnut in a row of four, and
- | nothing about it is comparable with the stage bars above it, so it should not
- | look like a third one of them.
- |
- | One colour across all four bars, not a palette. The server orders these
- | biggest-first, so a per-bar palette would repaint a category every time the
- | ranking moved — Call blue this week and orange the next, which invites a
- | reader to think the colour meant something. It is one series of one measure;
- | the bar heights are the whole message.
- |
- | Labels come from the server, which took them from config('crm.todo_types').
- | No task type is spelled out in this file.
- */
-const todoTypeChart = computed(() => ({
-  type: 'bar',
-  data: {
-    labels: props.charts.byTodoType.bars.map(r => r.label),
-    datasets: [{
-      data: props.charts.byTodoType.bars.map(r => r.value),
-      backgroundColor: '#0F766E',
-      borderRadius: 4, maxBarThickness: narrow.value ? 34 : 52,
-    }],
-  },
-  options: {
-    responsive: true, maintainAspectRatio: false,
-    plugins: { legend: { display: false } },
-    scales: {
-      x: { grid: { display: false }, ticks: tick },
-      y: { grid, ticks: { ...tick, precision: 0 }, beginAtZero: true },
-    },
-  },
-}))
-
-/*
- | The count, in the note — the same job allStagesNote does for the stage census,
- | plus the thing only this chart has to say.
- |
- | It is one of the several figures on the page the date picker does not move,
- | so the note leads with the window it actually uses. Left as a bare count it was the
- | one chart whose disagreement with the picker had no explanation on screen.
- */
-const todoTypeNote = computed(() => {
-  const n = props.charts.byTodoType.total
-  return `Due today or earlier, whatever the dates · ${n} ${n === 1 ? 'task' : 'tasks'} still open`
 })
 
 /* ---------------- the sign-in modal ---------------- */
@@ -521,12 +571,11 @@ const stopSuccess = router.on('success', () => {
    | Charts included, and they have to be.
    |
    | They used to be left out, on the grounds that one logged call does not
-   | move them. It can move all four: "What happened in this period" reads the
-   | same completed-to-do history the cards do, and logging a call closes a
-   | to-do and usually moves a lead, so the stage split and the to-do backlog
-   | shift with it. Refreshing only the cards left the Booking card reading 3
-   | beside a chart still drawing 2 — the numbers disagreeing on screen while
-   | the database was perfectly consistent.
+   | move them. It can move all three: logging a call usually moves a lead, and
+   | a lead that moves is a lead standing somewhere else — in both stage charts
+   | at once. Refreshing only the cards left the Booking card reading 3 beside a
+   | chart still drawing 2 — the numbers disagreeing on screen while the
+   | database was perfectly consistent.
    |
    | `todayDigest` is deliberately not in the list. It is a sign-in notice, not
    | a live count, and re-requesting it would make the server think it had been
@@ -617,36 +666,47 @@ onBeforeUnmount(() => { stopBefore(); stopSuccess() })
     </div>
 
     <!--
-      Four charts, two by two on desktop and stacked on a phone.
+      Three charts: the standing census across the top, and under it the two
+      questions that are only about this period.
 
-      The rows are the pairing: the same stage census twice on top, and
-      underneath the two questions that are not about stages at all. One grid
-      rather than two rows of two, so a single gap-4 sets both the column and
-      the row gap.
+      The top row is where the reading starts, so it gets the full width and
+      the horizontal bars that suit it. The row underneath holds the two
+      charts a date range does move — the same stage census narrowed to these
+      dates, and where those enquiries came from — side by side from lg up and
+      stacked below it, which is the width at which half a row stops being
+      enough for either of them.
 
-      The titles carry the distinction, which is the whole point of the pair on
-      the top row. Both group leads by the stage each one is at now; the left
-      one covers every enquiry ever received and the right one only those
-      created inside the selected dates, so the right chart's bars are always a
-      subset of the left's. The notes say it a second time — "All enquiries
-      ever received" against "Leads created in the selected period" — and that
-      is where it stops.
+      One grid rather than two, with the census spanning both columns, so a
+      single gap-4 still sets the column gap and the row gap and the three
+      cards cannot drift out of step with each other.
 
-      Two of the four ignore the picker, and their notes say so on the card
-      rather than leaving the reader to guess. The stage census used to carry
-      an ALL TIME chip beside its title instead, which made it read as a
-      different kind of panel rather than as one of four charts.
+      The titles carry the distinction between the two stage charts, and the
+      notes say it a second time — "All enquiries ever received" against
+      "Leads created in the selected period". The census ignores the picker and
+      its note is where that is said; it used to carry an ALL TIME chip beside
+      its title instead, which made it read as a different kind of panel rather
+      than as one of the charts.
 
       So there is nothing here but a title, a note and a config on every one of
-      the four. Every scrap of card styling is in ChartCard and takes no
-      argument, which is what makes the four headers identical and keeps the
-      plot boxes in step across a row.
+      the three. Every scrap of card styling is in ChartCard and takes no
+      argument, which is what makes the headers identical and keeps the plot
+      boxes in step across the bottom row.
     -->
-    <div class="mb-5 grid gap-4 xl:grid-cols-2">
-      <!-- every lead ever, by the stage each is at now. No date filter. -->
-      <ChartCard title="Where all enquiries stand"
-                 :note="allStagesNote"
-                 :config="allStagesChart" />
+    <div class="mb-5 grid gap-4 lg:grid-cols-2">
+      <!--
+        Every lead ever, by the stage each is at now. No date filter.
+
+        Wrapped for the same reason the doughnut is: ChartCard's root is the
+        grid item and its classes take no argument, so the column span belongs
+        to a wrapper. `grid` on it, not just `min-w-0`, so the lone child
+        stretches to the cell in both axes instead of sitting at its natural
+        height inside a stretched wrapper.
+      -->
+      <div class="grid min-w-0 lg:col-span-2">
+        <ChartCard title="Where all enquiries stand"
+                   :note="allStagesNote"
+                   :config="allStagesChart" />
+      </div>
 
       <!-- the same census, narrowed to the leads created in the range -->
       <ChartCard title="Enquiries in this period"
@@ -661,19 +721,15 @@ onBeforeUnmount(() => { stopBefore(); stopSuccess() })
 
         `grid` on the wrapper, not just `min-w-0`: a lone grid child stretches
         to its cell in both axes, so this card is sized by the row exactly as
-        the three unwrapped ones are. Left as a plain block it would sit at its
-        natural height inside a stretched wrapper — invisible while all four
-        cards are the same height, and a bug the day one of them is not.
+        the unwrapped one beside it is. Left as a plain block it would sit at
+        its natural height inside a stretched wrapper — invisible while both
+        cards in the row are the same height, and a bug the day one of them is
+        not.
       -->
       <div ref="sourceCard" class="grid min-w-0">
         <ChartCard title="Where enquiries came from" :config="sourceChart"
                    :empty="!charts.bySource.length" empty-text="No leads in this range" />
       </div>
-
-      <!-- the one chart no date range moves; the note on it says so -->
-      <ChartCard title="Pending work by type"
-                 :note="todoTypeNote"
-                 :config="todoTypeChart" />
     </div>
 
     <!--

@@ -9,9 +9,9 @@ import Chart from 'chart.js/auto'
  | There used to be one — `snapshot`, which tinted the header and darkened the
  | border on the two charts that ignore the date picker. It was a third way of
  | saying what the title and the note already say, and because it was a prop,
- | the four cards could be made to disagree from the outside: two of them ended
+ | the cards could be made to disagree from the outside: two of them ended
  | up reading as a different kind of panel and the grid looked broken. The
- | styling lives here now and takes no arguments, so the four cannot drift
+ | styling lives here now and takes no arguments, so the cards cannot drift
  | apart again.
  |
  | `note` defaults to a string rather than undefined so that a card with no
@@ -122,7 +122,7 @@ onBeforeUnmount(() => {
       one-line note is centred in the box, so the header looks like it has
       generous padding rather than an empty row waiting underneath it.
 
-      Not one class here is bound. Four cards rendering four different headers
+      Not one class here is bound. Cards rendering a header each of their own
       is what this file is fixing, so there is nothing left to render
       differently with.
     -->

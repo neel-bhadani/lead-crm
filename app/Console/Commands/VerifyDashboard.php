@@ -316,28 +316,6 @@ class VerifyDashboard extends Command
         return $out;
     }
 
-    /** Chart 4 — pending to-dos by type. Stock, so no date filter. */
-    private function byTodoType(User $u): array
-    {
-        $ts = $this->todoScope($u);
-
-        $map = [];
-        foreach (DB::select("SELECT t.type ty, COUNT(*) n
-                               FROM todos t JOIN leads l ON l.id = t.lead_id
-                              WHERE l.deleted_at IS NULL
-                                AND t.status = 'pending' $ts
-                              GROUP BY t.type") as $r) {
-            $map[$r->ty] = (int) $r->n;
-        }
-
-        $out = [];
-        foreach (array_keys(config('crm.todo_types')) as $k) {
-            $out[$k] = $map[$k] ?? 0;      // zero-filled: all four bars always render
-        }
-
-        return $out;
-    }
-
     /** Chart 3 — leads by source, on leads.created_at. */
     private function bySource(User $u, Carbon $from, Carbon $to): array
     {
@@ -392,19 +370,6 @@ class VerifyDashboard extends Command
         }
         ksort($dSource);
 
-        /*
-         | ksort, because the bars now arrive biggest-first and the independent
-         | side builds its map in config order. `===` on arrays compares key
-         | order too, so without this the check would fail on the ordering
-         | rather than on any number being wrong. The order itself is asserted
-         | where it belongs — see DashboardRangeTest.
-         */
-        $dTypes = [];
-        foreach ($charts['byTodoType']['bars'] as $bar) {
-            $dTypes[$bar['key']] = $bar['value'];
-        }
-        ksort($dTypes);
-
         $iSource = $this->bySource($user, $from, $to);
 
         $rows = [];
@@ -437,11 +402,6 @@ class VerifyDashboard extends Command
         $check('Chart 2 Enquiries this period',  $dPeriodStages, $this->byStage($user, $from, $to));
         $check('Chart 2 header total',           $charts['stagesInPeriod']['total'], array_sum($dPeriodStages));
         $check('Chart 3 Leads by source',        $dSource,  $iSource);
-        $iTypes = $this->byTodoType($user);
-        ksort($iTypes);
-
-        $check('Chart 4 To-dos by type',         $dTypes,   $iTypes);
-        $check('Chart 4 To-do header total',     $charts['byTodoType']['total'], array_sum($dTypes));
 
         /*
          | Cross-checks. The two columns above can agree and the dashboard still
@@ -489,19 +449,6 @@ class VerifyDashboard extends Command
         $check('Cross   chart 2 is a subset of chart 1', $subset, true);
 
         $check('Cross   chart 2 total = Total leads card', array_sum($dPeriodStages), $cards['total']);
-
-        /*
-         | The same question of chart 4: zero-filling across config('crm.todo_types')
-         | silently drops a row whose type is not one of them, and the only way
-         | to see that is to compare the bars against a count that does not
-         | group by type at all.
-         */
-        $allPending = $this->count("SELECT COUNT(*) n
-                                      FROM todos t JOIN leads l ON l.id = t.lead_id
-                                     WHERE l.deleted_at IS NULL
-                                       AND t.status = 'pending'" . $this->todoScope($user));
-
-        $check('Cross   to-do bars total all pending to-dos', array_sum($dTypes), $allPending);
 
         $this->pipelineByRange[$name] = $dAllStages;
         $check('Cross   Pending card = both panels',
