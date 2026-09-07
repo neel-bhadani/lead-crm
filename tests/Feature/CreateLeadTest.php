@@ -212,7 +212,11 @@ class CreateLeadTest extends TestCase
 
         $validated = [
             'first_name', 'middle_name', 'last_name', 'mobile_number', 'email',
-            'project_id', 'source', 'broker_name', 'stage', 'reason',
+            // `broker_name` is deliberately NOT in this list any more: the lead
+            // form does not send it and LeadRequest does not validate it, which
+            // is what keeps a pre-existing lead's text from being written over.
+            // The column stays on the table — see the channel-partner migration
+            'project_id', 'source', 'channel_partner_id', 'stage', 'reason',
             'requirement', 'booked_unit',
         ];
 
@@ -242,6 +246,11 @@ class CreateLeadTest extends TestCase
             'project_id'    => $this->alpha->id,
             'source'        => 'walk_in',
             'stage'         => 'fresh',
+            // follow-ups are booked by hand now, so the form carries the first
+            // one. Harmless on the terminal-stage cases: LeadRequest stops
+            // requiring these and the service creates no task for a closed lead.
+            'follow_up_type' => 'call',
+            'follow_up_at'   => now()->addDay()->format('Y-m-d H:i'),
         ], $overrides);
     }
 

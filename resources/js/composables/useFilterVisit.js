@@ -1,6 +1,7 @@
 import { nextTick, onMounted, watch } from 'vue'
 import { router } from '@inertiajs/vue3'
 import { cleanUrl } from '../lib/cleanUrl.js'
+import { withoutEmpty } from '../lib/withoutEmpty.js'
 
 /**
  * One filter visit: a GET with the page's filters, and a clean address bar
@@ -35,25 +36,18 @@ export function useFilterVisit(url) {
     return { visit, cleanUrl: clean }
 }
 
-/**
- * '', null and undefined are absence, not values, and absence is not worth
- * putting on the wire. 0 and '0' are values — no filter uses them today, but
- * dropping them would be a trap for one that did.
- *
- * This is why every filter visit sends `reset=1`. The controller merges what
- * arrives over what it already holds, so on its own an omitted key means
- * "leave that filter alone" — which would make emptying a single box
- * impossible once the empties are gone. `reset=1` drops the stored state
- * first, making the request the whole instruction: what is named is on, what
- * is missing is off. Each page already names every key it owns on every
- * visit, so the resolved filters are identical to what the empty values
- * produced — the same query, from a shorter request.
+/*
+ | Why every filter visit sends `reset=1`, given that withoutEmpty() has just
+ | dropped the empty keys.
+ |
+ | The controller merges what arrives over what it already holds, so on its own
+ | an omitted key means "leave that filter alone" — which would make emptying a
+ | single box impossible once the empties are gone. `reset=1` drops the stored
+ | state first, making the request the whole instruction: what is named is on,
+ | what is missing is off. Each page already names every key it owns on every
+ | visit, so the resolved filters are identical to what the empty values
+ | produced — the same query, from a shorter request.
  */
-function withoutEmpty(params) {
-    return Object.fromEntries(
-        Object.entries(params).filter(([, v]) => v !== '' && v !== null && v !== undefined),
-    )
-}
 
 /**
  * The 300ms debounce on the filter inputs, with a way to change the fields

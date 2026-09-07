@@ -19,12 +19,13 @@ use Tests\TestCase;
  * part wrong and selecting Call leaves three chips reading zero; get the tab
  * part wrong and the chips describe a list the user is not looking at.
  *
- * And the date filter means a different column on the Completed tab, because
- * "what did we get done last week" is not a question about when the work was
- * planned.
+ * And the date filter belongs to the Completed tab alone — "what did we get
+ * done last week" is a question about a period, on completed_at; the three
+ * pending tabs are states measured against today, and a range can only break
+ * them.
  *
  * @see \App\Http\Controllers\TodoController::typeCounts()
- * @see \App\Http\Controllers\TodoController::dateColumn()
+ * @see \App\Http\Controllers\TodoController::applyTab()
  */
 class TodoTypeChipsTest extends TestCase
 {
@@ -198,15 +199,45 @@ class TodoTypeChipsTest extends TestCase
         $this->assertSame([0, 0, 0, 1], $this->values(['tab' => 'completed', 'from' => '2026-03-01', 'to' => '2026-03-31']));
     }
 
-    /** The pending tabs filter on the due date, which is the only date they have. */
-    public function test_the_pending_tabs_filter_on_scheduled_at(): void
+    /**
+     * The pending tabs take no date range at all.
+     *
+     * They are defined against today, not against the picker, so a range can
+     * only ever trim them arbitrarily — and on Upcoming it wipes them out, since
+     * every range the control offers ends today and nothing scheduled after
+     * today can fall inside a window that ends today.
+     */
+    public function test_the_pending_tabs_ignore_the_date_range(): void
     {
         $this->pending('call', now()->subDays(3));          // due three days ago
         $this->pending('site_visit', now()->subDays(20));   // due twenty days ago
 
-        $this->assertSame(1, $this->chips(['tab' => 'overdue', 'range' => '7'])['total']);
-        $this->assertSame(2, $this->chips(['tab' => 'overdue', 'range' => '30'])['total']);
         $this->assertSame(2, $this->chips(['tab' => 'overdue'])['total'], 'all time is the default');
+        $this->assertSame(2, $this->chips(['tab' => 'overdue', 'range' => '7'])['total'],
+            'a range must not trim a bucket that is defined against today');
+        $this->assertSame(2, $this->chips(['tab' => 'overdue', 'range' => '30'])['total']);
+        $this->assertSame(2, $this->chips(['tab' => 'overdue', 'range' => 'today'])['total'],
+            'Overdue + Today read zero before: overdue is by definition before today');
+    }
+
+    /** The regression MAJ-2 was: Upcoming returning zero for every range. */
+    public function test_the_upcoming_tab_survives_every_range_the_control_offers(): void
+    {
+        $this->pending('call', now()->addDays(3));
+        $this->pending('site_visit', now()->addDays(20));
+
+        foreach ([null, 'today', '7', '30'] as $range) {
+            $props = $this->props(['tab' => 'upcoming'] + ($range ? ['range' => $range] : []));
+
+            $this->assertSame(2, $props['todos']['total'], "Upcoming must hold its rows for range=$range");
+            $this->assertSame(2, $props['types']['total'], "the chips must agree for range=$range");
+        }
+
+        // and a custom pair, which the control also allows
+        $this->assertSame(
+            2,
+            $this->props(['tab' => 'upcoming', 'from' => '2026-08-01', 'to' => '2026-09-02'])['todos']['total'],
+        );
     }
 
     /**

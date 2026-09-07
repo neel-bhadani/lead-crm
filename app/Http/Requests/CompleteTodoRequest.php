@@ -2,11 +2,14 @@
 
 namespace App\Http\Requests;
 
+use App\Http\Requests\Concerns\SchedulesFollowUp;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 class CompleteTodoRequest extends FormRequest
 {
+    use SchedulesFollowUp;
+
     public function authorize(): bool
     {
         $todo = $this->route('todo');
@@ -17,10 +20,15 @@ class CompleteTodoRequest extends FormRequest
     public function rules(): array
     {
         return [
+            /*
+             | Two remarks fields on this form, and they are not the same note.
+             | This one is the call that just happened and is stamped onto the
+             | to-do being closed, which is what the Completed tab and the whole
+             | history read. `follow_up_remarks` is a note for the task being
+             | booked and belongs to a call nobody has made yet.
+             */
             'remarks'      => ['required', 'string', 'max:1000'],
             'stage'        => ['required', Rule::in(array_keys(config('crm.stages')))],
-
-            'visit_at'     => ['nullable', 'required_if:stage,site_visit_scheduled', 'date', 'after:now'],
 
             'reason'       => [
                 'nullable',
@@ -30,17 +38,25 @@ class CompleteTodoRequest extends FormRequest
 
             'booked_unit'  => ['nullable', 'required_if:stage,booking_done', 'string', 'max:50'],
             'booking_date' => ['nullable', 'date'],
-        ];
+        ] + $this->followUpRules();
+    }
+
+    /**
+     * Every call that leaves the lead open books the next one. Only booking or
+     * losing it ends the chain, and those are the two stages where a pending
+     * to-do must not exist at all.
+     */
+    protected function needsFollowUp(): bool
+    {
+        return ! $this->stageIsTerminal();
     }
 
     public function messages(): array
     {
         return [
-            'remarks.required'      => 'Write a short remark about the call.',
-            'visit_at.required_if'  => 'Pick the site visit date and time.',
-            'visit_at.after'        => 'The site visit must be in the future.',
-            'reason.required_if'    => 'Select why this lead was lost.',
+            'remarks.required'        => 'Write a short remark about the call.',
+            'reason.required_if'      => 'Select why this lead was lost.',
             'booked_unit.required_if' => 'Enter the unit that was booked.',
-        ];
+        ] + $this->followUpMessages();
     }
 }

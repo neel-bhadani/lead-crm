@@ -6,7 +6,6 @@ use App\Http\Controllers\Concerns\ResolvesFilters;
 use App\Models\Lead;
 use App\Models\Todo;
 use App\Models\User;
-use App\Services\FollowUpScheduler;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Inertia\Inertia;
@@ -50,8 +49,6 @@ class DashboardController extends Controller
      * hidden on the next visit — it is not sent.
      */
     private const DIGEST_SEEN = 'dashboard.digest_seen';
-
-    public function __construct(private FollowUpScheduler $scheduler) {}
 
     public function index(Request $request)
     {
@@ -114,12 +111,21 @@ class DashboardController extends Controller
                 'overdue' => $this->followUps($user, 'overdue'),
             ],
             'options'  => [
+                // the three presets DateRangePicker draws, shared with the two
+                // report pages so all three offer the same windows
+                'ranges'      => config('crm.date_ranges'),
                 'stages'      => config('crm.stages'),
                 'stageColors' => config('crm.stage_colors'),
                 'sources'     => config('crm.sources'),
                 // CompleteTaskModal needs these to offer a reason when a call
                 // ends in "lost"; StageBadge inside it reads stageColors above.
                 'reasons'     => config('crm.lost_reasons'),
+                // and these to book the next follow-up: the task types it can
+                // be, the stages that end the chain instead, and the one stage
+                // that forces the next task to be the site visit
+                'types'          => config('crm.todo_types'),
+                'terminalStages' => config('crm.terminal_stages'),
+                'handoverStage'  => config('crm.handover_stage'),
                 // CallButtons builds its tel: and wa.me hrefs from this
                 'countryCode' => config('crm.country_code'),
                 'roleLabels'  => config('crm.role_labels'),
@@ -496,18 +502,18 @@ class DashboardController extends Controller
                      | things on them, so loading the relation for every row was
                      | a query nothing read.
                      */
-                    'lead:id,first_name,middle_name,last_name,mobile_number,stage,stage_changed_at,created_at,not_connected_count',
+                    /*
+                     | assigned_to and assigned_role are not on the panel rows;
+                     | CompleteTaskModal opens from them and needs both for its
+                     | clash check — see TodoController::index().
+                     */
+                    'lead:id,first_name,middle_name,last_name,mobile_number,stage,stage_changed_at,created_at,not_connected_count,assigned_to,assigned_role',
                     // role too: the panel prints "name · role" under the lead
                     'owner:id,first_name,last_name,role',
                 ])
                 ->orderBy('scheduled_at')
                 ->limit(self::PANEL_ROWS)
                 ->get()
-                // the panels open the same CompleteTaskModal the To-do page does
-                ->each(fn($todo) => $todo->setAttribute(
-                    'follow_up_previews',
-                    $this->scheduler->previews($todo->lead)
-                ))
                 ->all(),
             'total' => $query()->count(),
         ];

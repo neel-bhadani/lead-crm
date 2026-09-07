@@ -12,30 +12,37 @@ use Illuminate\Support\Facades\DB;
 /**
  * Every stage change in the application goes through this class.
  * Nothing else may write leads.stage directly.
+ *
+ * Follow-ups are scheduled by hand. The user types the date, the type and an
+ * optional note on the form they are already filling in — the add-lead form or
+ * the log-call modal — and this class saves that datetime exactly as it was
+ * entered. There is no interval table, no retry ladder and no working-hours
+ * clamp: a time a person chose is a time a person chose, and moving it would be
+ * second-guessing them.
+ *
+ * What has not changed is who owns the rules. This is still the only place that
+ * writes a pending to-do, still one transaction per change, and still the
+ * keeper of "an open lead has exactly one pending to-do".
  */
 class LeadFollowUpService
 {
-    public function __construct(private FollowUpScheduler $scheduler) {}
-
     /**
-     * Called when a lead is created. Gives it its first task, because a lead
-     * must never exist without a pending to-do.
+     * Called when a lead is created. Gives it its first task from the date the
+     * user picked on the form, because an open lead must never exist without a
+     * pending to-do.
      *
-     * "Its first task" used to mean "right now, pulled inside working hours",
-     * which was right while every new lead started at `fresh` — the configured
-     * interval for that stage is 0, so now() and now()+0h are the same moment
-     * and nothing looked wrong. Once source defaults started creating leads
-     * directly at `details_shared` or `site_visit_done`, that hardcoded now()
-     * was silently ignoring 48 and 24 hours of configuration: a lead typed in
-     * at 2:03 PM as already visited asked for a call back at 2:03 PM.
-     *
-     * The stage decides the interval here exactly as it does when a call is
-     * logged, and it decides it in the same place — next(), which is the only
-     * thing in the application allowed to answer "when next".
+     * $when is null only when the lead arrived at a terminal stage — booked or
+     * lost on the way in, nothing left to follow up. The form hides the three
+     * fields in that case and LeadRequest stops requiring them, so a null here
+     * means "no task wanted" rather than "the user forgot".
      */
-    public function onLeadCreated(Lead $lead): void
-    {
-        DB::transaction(function () use ($lead) {
+    public function onLeadCreated(
+        Lead $lead,
+        ?Carbon $when = null,
+        ?string $type = null,
+        ?string $remarks = null
+    ): void {
+        DB::transaction(function () use ($lead, $when, $type, $remarks) {
             /*
              | Added at anything but `fresh` — a backfill. Someone is typing in
              | a lead that has already been called, already visited, already
@@ -61,40 +68,31 @@ class LeadFollowUpService
                 $this->recordStageChange($lead, $lead->stage, 'Lead added at this stage.');
             }
 
-            /*
-             | next() answers the whole question, and the "no task" cases come
-             | back as null rather than being re-tested here: a terminal stage
-             | (booked or lost on arrival — nothing left to schedule) and an
-             | exhausted retry ladder. It has already pulled the result inside
-             | working hours, so a lead added at 6 PM is a call to make in the
-             | morning, and one added at 6 PM as already visited is a call to
-             | make the morning after that.
-             */
-            $when = $this->scheduler->next($lead, $lead->stage);
-
-            if ($when) {
-                $this->createTodo($lead, $when, $lead->stage);
+            if ($when && ! $lead->isTerminal()) {
+                $this->createTodo($lead, $when, $type, $remarks);
             }
         });
     }
 
     /**
-     * Complete a task, move the stage, schedule the next task.
+     * Complete a task, move the stage, save the next task the user picked.
      * All of it in one transaction: if the new task fails to save,
      * the stage change rolls back too, so a lead can never end up
      * with no open task and disappear from everyone's list.
      *
-     * @return array{auto_lost: bool, handed_over_to: ?string} what was decided
-     *         without the user asking — see noticeFor()
+     * @return array{handed_over_to: ?string} what was decided without the user
+     *         asking — see noticeFor()
      */
     public function complete(
         Todo $todo,
         string $stage,
         string $remarks,
-        ?Carbon $visitAt = null,
+        ?Carbon $nextAt = null,
+        ?string $nextType = null,
+        ?string $nextRemarks = null,
         array $extra = []
     ): array {
-        return DB::transaction(function () use ($todo, $stage, $remarks, $visitAt, $extra) {
+        return DB::transaction(function () use ($todo, $stage, $remarks, $nextAt, $nextType, $nextRemarks, $extra) {
 
             $lead = Lead::whereKey($todo->lead_id)->lockForUpdate()->firstOrFail();
 
@@ -108,18 +106,24 @@ class LeadFollowUpService
 
             $this->applyStage($lead, $stage, $extra);
 
-            return $this->schedule($lead, $stage, $visitAt, $todo->id);
+            return $this->schedule($lead, $stage, $nextAt, $nextType, $nextRemarks, $todo->id);
         });
     }
 
     /**
      * Stage change made from the lead form rather than from a call.
      *
-     * @return array{auto_lost: bool, handed_over_to: ?string}
+     * @return array{handed_over_to: ?string}
      */
-    public function changeStage(Lead $lead, string $stage, array $extra = []): array
-    {
-        return DB::transaction(function () use ($lead, $stage, $extra) {
+    public function changeStage(
+        Lead $lead,
+        string $stage,
+        array $extra = [],
+        ?Carbon $nextAt = null,
+        ?string $nextType = null,
+        ?string $nextRemarks = null
+    ): array {
+        return DB::transaction(function () use ($lead, $stage, $extra, $nextAt, $nextType, $nextRemarks) {
             $lead = Lead::whereKey($lead->id)->lockForUpdate()->firstOrFail();
 
             $this->applyStage($lead, $stage, $extra);
@@ -129,7 +133,7 @@ class LeadFollowUpService
             // history at all
             $this->recordStageChange($lead, $stage, 'Stage changed from the lead form.');
 
-            return $this->schedule($lead, $stage);
+            return $this->schedule($lead, $stage, $nextAt, $nextType, $nextRemarks);
         });
     }
 
@@ -140,11 +144,6 @@ class LeadFollowUpService
      */
     public function noticeFor(array $outcome): ?string
     {
-        if ($outcome['auto_lost'] ?? false) {
-            return 'No response after ' . config('crm.max_attempts')
-                . ' attempts. Lead marked as lost.';
-        }
-
         if ($outcome['handed_over_to'] ?? null) {
             return "Lead handed over to {$outcome['handed_over_to']}.";
         }
@@ -160,6 +159,13 @@ class LeadFollowUpService
         $lead->stage_changed_at = now();
         $lead->last_activity_at = now();
 
+        /*
+         | Still counted, and still reset by any other outcome, because the
+         | to-do rows and the follow-up panels print "attempt 3" beside a lead
+         | nobody can reach. Nothing acts on the number any more: the ladder
+         | that used to close a lead at five failed attempts went with the
+         | automatic scheduling, so a lead is lost only when a user says so.
+         */
         $lead->not_connected_count = $stage === 'not_connected'
             ? $lead->not_connected_count + 1
             : 0;
@@ -177,67 +183,52 @@ class LeadFollowUpService
     }
 
     /**
-     * @return array{auto_lost: bool, handed_over_to: ?string}
+     * Cancel what is pending, hand over if this is the handover stage, and
+     * write the task the user asked for.
+     *
+     * @return array{handed_over_to: ?string}
      */
     private function schedule(
         Lead $lead,
         string $stage,
-        ?Carbon $visitAt = null,
+        ?Carbon $when,
+        ?string $type,
+        ?string $remarks,
         ?int $fromTodo = null
     ): array {
-        $outcome = ['auto_lost' => false, 'handed_over_to' => null];
+        $outcome  = ['handed_over_to' => null];
+        $terminal = in_array($stage, config('crm.terminal_stages'), true);
 
-        // exactly one pending task per lead, always
-        Todo::where('lead_id', $lead->id)
-            ->where('status', 'pending')
-            ->update(['status' => 'cancelled']);
+        /*
+         | Exactly one pending task per lead — so the one it is holding goes
+         | when a closed lead should have none, and when a replacement date has
+         | arrived to take its place. Not otherwise.
+         |
+         | That last clause is the whole reason this is a condition rather than
+         | the unconditional cancel it used to be. The scheduler always had an
+         | answer, so cancelling first and creating second could never leave a
+         | gap. Now the date comes from a form, and a stage change that carries
+         | no date — editing a lead's stage without touching its follow-up —
+         | must leave the existing task standing rather than cancel it and put
+         | nothing back. An open lead with no pending to-do is invisible on
+         | every list in the application and would never be called again.
+         */
+        if ($terminal || $when) {
+            Todo::where('lead_id', $lead->id)
+                ->where('status', 'pending')
+                ->update(['status' => 'cancelled']);
+        }
 
         // handover — scheduling a site visit moves the lead to a salesperson
         if ($stage === config('crm.handover_stage') && $lead->assigned_role === 'telecaller') {
             $outcome['handed_over_to'] = $this->handover($lead);
         }
 
-        // retry ladder exhausted — close the lead instead of scheduling
-        if ($this->scheduler->attemptsExhausted($lead, $stage)) {
-            $lead->forceFill([
-                'stage'            => 'lost',
-                'reason'           => 'no_response',
-                'stage_changed_at' => now(),
-            ])->save();
-
-            /*
-             | The lead just moved to lost, and nothing else is going to say so.
-             | The to-do the user completed carries the stage they chose — the
-             | one that exhausted the ladder — not this one, so an auto-lost
-             | lead was invisible to every count that reads the history.
-             */
-            $this->recordStageChange($lead, 'lost', 'No response after '
-                . config('crm.max_attempts') . ' attempts — closed automatically.');
-
-            $outcome['auto_lost'] = true;
-
+        if ($terminal || ! $when) {
             return $outcome;
         }
 
-        /*
-         | The one distinction in this file worth reading twice.
-         |
-         | $visitAt is the site visit the *customer* chose, typed into the
-         | log-call modal. It is used exactly as entered — 8 PM on a Sunday is
-         | 8 PM on a Sunday, because the customer decides when they are free to
-         | visit, not the office diary. It must never be passed through
-         | withinWorkingHours().
-         |
-         | Everything else on this line is *system*-generated, and next() has
-         | already pulled it inside working hours.
-         */
-        $when = $visitAt ?? $this->scheduler->next($lead, $stage);
-
-        if (! $when) {
-            return $outcome;
-        }
-
-        $this->createTodo($lead, $when, $stage, $fromTodo);
+        $this->createTodo($lead, $when, $type, $remarks, $fromTodo);
 
         return $outcome;
     }
@@ -252,8 +243,8 @@ class LeadFollowUpService
      *
      * complete() already writes one — it closes the to-do the user was working
      * on and stamps the outcome onto it — so this is only for the paths that
-     * have no to-do to close: the lead form, the auto-lost rule, and a lead
-     * created straight into a terminal stage.
+     * have no to-do to close: the lead form, and a lead created straight into a
+     * stage other than `fresh`.
      *
      * The row is `completed`, so it never becomes someone's task and cannot
      * affect "every open lead has a pending to-do". It does appear on the
@@ -275,15 +266,28 @@ class LeadFollowUpService
         ]);
     }
 
-    private function createTodo(Lead $lead, Carbon $when, string $stage, ?int $fromTodo = null): void
-    {
+    /**
+     * The next task, from what the user typed.
+     *
+     * `$when` is used verbatim. It is a datetime a person chose — the customer
+     * is free on Sunday evening or they are not — and there is nothing left in
+     * the application that would move it.
+     */
+    private function createTodo(
+        Lead $lead,
+        Carbon $when,
+        ?string $type,
+        ?string $remarks,
+        ?int $fromTodo = null
+    ): void {
         Todo::create([
             'lead_id'             => $lead->id,
             'assigned_to'         => $lead->assigned_to,
             'created_by'          => Auth::id(),
             'scheduled_at'        => $when,
-            'type'                => $stage === config('crm.handover_stage') ? 'site_visit' : 'call',
+            'type'                => $type ?? 'call',
             'status'              => 'pending',
+            'remarks'             => $remarks,
             'rescheduled_from_id' => $fromTodo,
         ]);
     }
@@ -320,6 +324,17 @@ class LeadFollowUpService
         $lead->assigned_to   = $next->id;
         $lead->assigned_role = 'salesperson';
         $lead->save();
+
+        /*
+         | The new task is created after this and reads $lead->assigned_to, so
+         | it lands on the salesperson by itself. This is for the other path:
+         | a stage change that brought no date leaves the lead's existing task
+         | standing, and a task left behind on the telecaller's list would be
+         | a handover the To-do page never carried out.
+         */
+        Todo::where('lead_id', $lead->id)
+            ->where('status', 'pending')
+            ->update(['assigned_to' => $next->id]);
 
         return $next->display_name;
     }

@@ -115,7 +115,7 @@ const when = row => row.at ? (row.earlier ? stamp(row.at) : clock(row.at)) : 'â€
       </button>
 
       <Link :href="route('todos.index', { tab: 'today' })" class="btn flex-1 sm:flex-none">
-        Go to my to-do list
+        Go to my follow-ups
       </Link>
     </template>
   </Modal>

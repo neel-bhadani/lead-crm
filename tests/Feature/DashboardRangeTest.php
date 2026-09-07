@@ -187,7 +187,12 @@ class DashboardRangeTest extends TestCase
         $todo = $lead->pendingTodo;
 
         $this->actingAs($this->admin)
-            ->post("/todos/{$todo->id}/complete", ['stage' => 'connected', 'remarks' => 'Spoke.']);
+            ->post("/todos/{$todo->id}/complete", [
+                'stage' => 'connected', 'remarks' => 'Spoke.',
+                // the call books the next one; nothing schedules it any more
+                'follow_up_type' => 'call',
+                'follow_up_at'   => now()->addDay()->format('Y-m-d H:i'),
+            ])->assertSessionHasNoErrors();
 
         $this->assertSame(1, Todo::whereNotNull('outcome_stage')->count());
         $this->assertSame('connected', Todo::whereNotNull('outcome_stage')->value('outcome_stage'));
@@ -553,6 +558,9 @@ class DashboardRangeTest extends TestCase
             'project_id'    => $this->project->id,
             'source'        => 'walk_in',
             'stage'         => 'fresh',
+            // follow-ups are booked by hand now, so the form carries one
+            'follow_up_type' => 'call',
+            'follow_up_at'   => now()->addDay()->format('Y-m-d H:i'),
         ];
     }
 

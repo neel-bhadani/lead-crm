@@ -133,14 +133,24 @@ class ConversionCountingTest extends TestCase
             'project_id'    => $this->project->id,
             'source'        => 'walk_in',
             'stage'         => 'fresh',
-        ])->assertRedirect();
+            'follow_up_type' => 'call',
+            'follow_up_at'   => now()->addDay()->format('Y-m-d H:i'),
+        ])->assertRedirect()->assertSessionHasNoErrors();
 
         $this->assertSame(0, Todo::whereNotNull('outcome_stage')->count());
         $this->assertSame(1, Todo::where('status', 'pending')->count());
         $this->assertSame(0, Lead::open()->doesntHave('pendingTodo')->count());
     }
 
-    public function test_an_auto_lost_lead_records_the_loss(): void
+    /**
+     * The retry ladder used to close a lead at the fifth failed attempt. It
+     * depended on the interval table and went with it, so nothing acts on
+     * `not_connected_count` any more — it is counted, printed beside the lead
+     * as an attempt number, and left alone.
+     *
+     * A lead is lost when a user picks Lost, and at no other moment.
+     */
+    public function test_repeated_no_answers_never_close_the_lead_by_themselves(): void
     {
         $lead = $this->lead($this->admin, now()->subDays(10));
         $lead->update(['stage' => 'not_connected', 'not_connected_count' => 4]);
@@ -151,12 +161,21 @@ class ConversionCountingTest extends TestCase
             'type' => 'call', 'status' => 'pending',
         ]);
 
-        $outcome = $this->service()->complete($todo, 'not_connected', 'No answer again.');
+        $next = now()->addDay()->startOfMinute();
 
-        $this->assertTrue($outcome['auto_lost']);
-        $this->assertSame('lost', $lead->fresh()->stage);
-        // without the fix the only history row said "not_connected"
-        $this->assertSame(1, $this->card('today', 'lost'));
+        $this->service()->complete($todo, 'not_connected', 'No answer again.', $next, 'call');
+
+        $lead->refresh();
+
+        $this->assertSame('not_connected', $lead->stage, 'nothing may close a lead on its own');
+        $this->assertSame(5, $lead->not_connected_count, 'the attempt number is still counted');
+        $this->assertSame(0, $this->card('today', 'lost'));
+
+        // and the lead is still on somebody's list, at the moment they chose
+        $pending = Todo::where('lead_id', $lead->id)->where('status', 'pending')->get();
+
+        $this->assertCount(1, $pending);
+        $this->assertSame($next->format('Y-m-d H:i'), $pending->first()->scheduled_at->format('Y-m-d H:i'));
     }
 
     /* ---------------- conversion is a cohort ---------------- */

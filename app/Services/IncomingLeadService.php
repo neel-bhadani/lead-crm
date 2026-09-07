@@ -1,0 +1,155 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\Integration;
+use App\Models\Lead;
+use App\Models\User;
+use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Facades\DB;
+
+/**
+ * A lead arriving from a machine rather than from a person at a keyboard.
+ *
+ * Everything provider-specific has already happened by the time this is called
+ * — the Graph fetch, the field-name guessing, the phone stripping — so what is
+ * left is the part that must be identical to the Leads page: create the row,
+ * then hand it to LeadFollowUpService for its first follow-up, both inside one
+ * transaction. That is exactly the shape of LeadController::store(), and it is
+ * the reason an imported lead cannot break the invariant the To-do page rests
+ * on.
+ *
+ * The two outcomes that are not "created" live here too, because both are
+ * decisions about whether a lead should exist and neither is Meta's business:
+ * a redelivered external_id, and a phone number already enquiring about this
+ * project.
+ */
+class IncomingLeadService
+{
+    public function __construct(private LeadFollowUpService $followUps) {}
+
+    /** @var string returned by import() when the same external_id arrived before */
+    public const DUPLICATE = 'duplicate';
+
+    /** @var string returned when this number is already enquiring about this project */
+    public const REPEAT = 'repeat_enquiry';
+
+    /**
+     * Create the lead and its first follow-up, or say why not.
+     *
+     * @param  array{first_name: string, last_name: string, mobile_number: string, email: ?string}  $attributes
+     * @return array{result: string, lead: ?Lead, message: string}
+     */
+    public function import(Integration $integration, string $externalId, array $attributes, string $source): array
+    {
+        $projectId = (int) $integration->setting('default_project_id');
+        $owner     = User::find($integration->setting('assign_to_user_id'));
+
+        if (! $owner) {
+            // configured against somebody who has since been deleted: a lead
+            // with no owner would be invisible on every list in the application
+            throw new \RuntimeException('The user this integration assigns leads to no longer exists.');
+        }
+
+        /*
+         | Idempotency, first pass.
+         |
+         | withTrashed(), because `leads.external_id` is unique across deleted
+         | rows too — a lead that was imported and then deleted must not come
+         | back on Meta's next retry, and an insert that ignored the trashed row
+         | would fail on the index rather than skip.
+         */
+        $existing = Lead::withTrashed()->where('external_id', $externalId)->first();
+
+        if ($existing) {
+            return [
+                'result'  => self::DUPLICATE,
+                'lead'    => $existing,
+                'message' => "Already imported as lead #{$existing->id}; nothing created.",
+            ];
+        }
+
+        /*
+         | The same person, enquiring again.
+         |
+         | Not an error: they have filled in a second form, perhaps from a
+         | different ad. But they already have a lead on this project with an
+         | owner and a pending follow-up, and a second row would split one
+         | conversation in two and put the same customer on two people's call
+         | lists. The unique index on (mobile_number, project_id) would refuse
+         | the insert anyway — this is the same answer given as a sentence.
+         */
+        $repeat = Lead::withTrashed()
+            ->where('mobile_number', $attributes['mobile_number'])
+            ->where('project_id', $projectId)
+            ->first();
+
+        if ($repeat) {
+            return [
+                'result'  => self::REPEAT,
+                'lead'    => $repeat,
+                'message' => $repeat->trashed()
+                    ? "This number is on deleted lead #{$repeat->id} for this project. Restore that lead rather than importing it again."
+                    : "This number is already lead #{$repeat->id} on this project — a repeat enquiry, not a new lead.",
+            ];
+        }
+
+        try {
+            $lead = DB::transaction(function () use ($attributes, $externalId, $projectId, $owner, $source) {
+                $lead = Lead::create($attributes + [
+                    'project_id'       => $projectId,
+                    'source'           => $source,
+                    'external_id'      => $externalId,
+                    'stage'            => 'fresh',
+                    'assigned_to'      => $owner->id,
+                    'assigned_role'    => $owner->role,
+                    // nobody typed this in; created_by is nullable and stays
+                    // null, which is what marks a lead as machine-created
+                    'created_by'       => null,
+                    'stage_changed_at' => now(),
+                    'last_activity_at' => now(),
+                ]);
+
+                /*
+                 | The follow-up, through the service that owns them.
+                 |
+                 | Scheduling is manual everywhere else in this application —
+                 | the user types a date on the form — so an imported lead has
+                 | nobody to type one and would land with no pending task at
+                 | all. That is not a cosmetic gap: an open lead with no pending
+                 | to-do appears on no tab of the To-do page, in no dashboard
+                 | panel and on nobody's list, and would never be called.
+                 |
+                 | now() puts it in the assigned user's Due today, which is the
+                 | correct urgency for a lead that has this second raised its
+                 | hand on an advert.
+                 */
+                $this->followUps->onLeadCreated(
+                    $lead,
+                    now(),
+                    'call',
+                    'Lead arrived from ' . config("integrations.providers.$source.name", $source) . '. Call as soon as possible.',
+                );
+
+                return $lead;
+            });
+        } catch (UniqueConstraintViolationException $e) {
+            /*
+             | Idempotency, second pass — and the one that actually holds.
+             |
+             | The checks above are a read followed by a write, so two
+             | deliveries of the same leadgen_id arriving at once can both pass
+             | them. The unique index is what makes the guarantee, and this is
+             | where that refusal is turned back into "duplicate" rather than a
+             | failed job Meta would retry forever.
+             */
+            return [
+                'result'  => self::DUPLICATE,
+                'lead'    => Lead::withTrashed()->where('external_id', $externalId)->first(),
+                'message' => 'A concurrent delivery created this lead first; nothing created.',
+            ];
+        }
+
+        return ['result' => 'created', 'lead' => $lead, 'message' => "Lead #{$lead->id} created."];
+    }
+}

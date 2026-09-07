@@ -97,9 +97,14 @@ const dateError = computed(() => {
  | A half-typed custom range sends nothing at all. The error is already on
  | screen; a visit on top of it would either reload the same list for no reason
  | or apply a range the user has not finished choosing.
+ |
+ | Only on the tab that has a date control, though. The range means nothing on
+ | the three pending tabs, so a half-filled pair left behind on Completed must
+ | not be able to hold the user there — the control they would have to fix to
+ | escape is not even on screen once they have clicked away.
  */
 const push = () => {
-  if (f.range === 'custom' && (!f.from || !f.to || dateError.value)) return
+  if (wantedTab === 'completed' && f.range === 'custom' && (!f.from || !f.to || dateError.value)) return
 
   visit({ reset: 1, tab: wantedTab, ...payload() })
 }
@@ -120,6 +125,36 @@ const clearFilters = () => {
   // something they asked to lose
   push()
 }
+
+/* ---------------- what the filter bar may offer ---------------- */
+
+/*
+ | The date control belongs to Completed alone.
+ |
+ | The three pending tabs are states measured against today — overdue is before
+ | it, Today is on it, Upcoming is after it — so a window cannot narrow them
+ | usefully, and on Upcoming it cannot narrow them at all: every range this
+ | control offers ends today. The server ignores the range on those tabs
+ | (TodoController::applyTab), and offering a control that provably does nothing
+ | is worse than not offering it, so it comes off the bar too.
+ |
+ | props.tab, not wantedTab: this describes the list on screen, and mid-flight
+ | the list on screen is still the old tab's.
+ */
+const showDateFilter = computed(() => props.tab === 'completed')
+
+/*
+ | Whether the user has narrowed this list themselves — which decides whether an
+ | empty table means "you have nothing" or "nothing matched".
+ |
+ | The dates count only where they do anything, which is the same tab the
+ | control shows on. A range left over from a visit to Completed is not a filter
+ | the user is looking at while they are on Upcoming.
+ */
+const hasFilters = computed(() =>
+  Boolean(f.search || f.type || f.assigned_to ||
+    (showDateFilter.value && (f.range || f.from || f.to))),
+)
 
 /* ---------------- type chips ---------------- */
 
@@ -183,11 +218,11 @@ const leadLine = t => [t.lead?.mobile_number, t.lead?.project?.name].filter(Bool
 </script>
 
 <template>
-  <Head title="To-do" />
+  <Head title="Follow-ups" />
 
-  <AppLayout title="To-do (Schedule)" subtitle="Your calls and site visits">
+  <AppLayout title="Follow-ups" subtitle="Your calls and site visits">
     <template #actions>
-      <button class="btn w-full sm:w-auto" @click="openAdd">Add to-do</button>
+      <button class="btn w-full sm:w-auto" @click="openAdd">Add follow-up</button>
     </template>
 
     <div class="card overflow-hidden">
@@ -222,45 +257,43 @@ const leadLine = t => [t.lead?.mobile_number, t.lead?.project?.name].filter(Bool
         </select>
 
         <!--
-          Which column this filters on is the server's business and it changes
-          with the tab: due date on the three pending tabs, completion date on
-          Completed. The label follows, so the control never quietly means
-          something other than it says.
+          Completed only — see showDateFilter. That tab filters on completed_at,
+          so the label can say so outright rather than changing with the tab.
         -->
-        <select v-model="f.range" class="w-full md:!w-36"
-                :aria-label="tab === 'completed' ? 'Date completed' : 'Date due'">
-          <option value="">All time</option>
-          <option value="today">Today</option>
-          <option value="7">Last 7 days</option>
-          <option value="30">Last 30 days</option>
-          <option value="custom">Custom…</option>
-        </select>
+        <template v-if="showDateFilter">
+          <select v-model="f.range" class="w-full md:!w-36" aria-label="Date completed">
+            <option value="">All time</option>
+            <option value="today">Today</option>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="custom">Custom…</option>
+          </select>
 
-        <!--
-          Only when it is asked for, and nothing is applied until both dates are
-          set and agree with each other. `max` is today in IST from the server,
-          not the browser's idea of today.
-        -->
-        <template v-if="f.range === 'custom'">
-          <input v-model="f.from" type="date" :max="options.today"
-                 class="w-full md:!w-40" aria-label="From date" />
-          <input v-model="f.to" type="date" :min="f.from" :max="options.today"
-                 class="w-full md:!w-40" aria-label="To date" />
+          <!--
+            Only when it is asked for, and nothing is applied until both dates are
+            set and agree with each other. `max` is today in IST from the server,
+            not the browser's idea of today.
+          -->
+          <template v-if="f.range === 'custom'">
+            <input v-model="f.from" type="date" :max="options.today"
+                   class="w-full md:!w-40" aria-label="From date" />
+            <input v-model="f.to" type="date" :min="f.from" :max="options.today"
+                   class="w-full md:!w-40" aria-label="To date" />
+          </template>
         </template>
 
         <button class="btn-ghost w-full md:w-auto" @click="clearFilters">Clear</button>
 
         <!-- w-full so the complaint gets a line of its own rather than
              elbowing a control off the row it belongs to -->
-        <p v-if="dateError" class="w-full text-xs font-medium text-rose-700" role="alert">
+        <p v-if="showDateFilter && dateError" class="w-full text-xs font-medium text-rose-700" role="alert">
           {{ dateError }}
         </p>
 
         <!-- says which date the filter above is about, once it is doing
              anything at all -->
-        <p v-if="f.range" class="w-full text-xs text-slate-400">
-          {{ tab === 'completed' ? 'Filtering on when the task was completed.'
-             : 'Filtering on when the task is due.' }}
+        <p v-if="showDateFilter && f.range" class="w-full text-xs text-slate-400">
+          Filtering on when the follow-up was completed.
         </p>
       </div>
 
@@ -271,14 +304,25 @@ const leadLine = t => [t.lead?.mobile_number, t.lead?.project?.name].filter(Bool
       -->
       <FilterChips :chips="chips" :active="f.type" @select="setType" />
 
-      <!-- empty -->
+      <!--
+        Empty. Two different sentences, because they are two different facts: a
+        list with no filter on it is empty because there is nothing in it, and a
+        filtered one is empty because nothing matched — and only the second has
+        anything the user can do about it. Same wording as the Users page.
+      -->
       <div v-if="!todos.data.length" class="px-5 py-14 text-center text-sm text-slate-500">
-        <p class="mb-1 font-semibold text-slate-700">
-          {{ tab === 'overdue' ? 'Nothing waiting'
-             : tab === 'today' ? 'No calls due today'
-             : tab === 'upcoming' ? 'Nothing scheduled ahead' : 'No completed tasks yet' }}
-        </p>
-        New tasks appear automatically as calls are logged.
+        <template v-if="hasFilters">
+          <p class="mb-1 font-semibold text-slate-700">No follow-ups match</p>
+          Try clearing the filters.
+        </template>
+        <template v-else>
+          <p class="mb-1 font-semibold text-slate-700">
+            {{ tab === 'overdue' ? 'Nothing waiting'
+               : tab === 'today' ? 'No calls due today'
+               : tab === 'upcoming' ? 'Nothing scheduled ahead' : 'No completed follow-ups yet' }}
+          </p>
+          Follow-ups you schedule will appear here.
+        </template>
       </div>
 
       <!-- rows: table on desktop, cards on mobile -->
@@ -328,7 +372,7 @@ const leadLine = t => [t.lead?.mobile_number, t.lead?.project?.name].filter(Bool
               <!-- dialling is useful on a closed task too, so it sits outside the pending check -->
               <div class="flex items-center gap-1.5">
                 <template v-if="t.status === 'pending'">
-                  <button class="btn px-3 py-1 text-xs" @click="openComplete(t)">Log call</button>
+                  <button class="btn px-3 py-1 text-xs" @click="openComplete(t)">Update</button>
                   <button class="btn-xs" @click="openEdit(t)">Edit</button>
                 </template>
                 <CallButtons v-if="t.lead?.mobile_number" compact :mobile="t.lead.mobile_number" />
@@ -378,7 +422,7 @@ const leadLine = t => [t.lead?.mobile_number, t.lead?.project?.name].filter(Bool
                class="mt-3 space-y-2 border-t border-slate-100 pt-3">
             <CallButtons v-if="t.lead?.mobile_number" :mobile="t.lead.mobile_number" />
             <div v-if="t.status === 'pending'" class="flex gap-2">
-              <button class="btn flex-1 py-1.5 text-xs" @click="openComplete(t)">Log call</button>
+              <button class="btn flex-1 py-1.5 text-xs" @click="openComplete(t)">Update</button>
               <button class="btn-xs flex-1" @click="openEdit(t)">Edit</button>
             </div>
           </div>
@@ -386,7 +430,7 @@ const leadLine = t => [t.lead?.mobile_number, t.lead?.project?.name].filter(Bool
       </div>
 
       <div class="flex flex-col items-start gap-3 px-4 py-3.5 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-        <span>{{ todos.total }} task{{ todos.total === 1 ? '' : 's' }}</span>
+        <span>{{ todos.total }} follow-up{{ todos.total === 1 ? '' : 's' }}</span>
         <div class="flex flex-wrap gap-1">
           <Link v-for="link in todos.links" :key="link.label" :href="link.url ?? ''"
                 class="rounded-md border px-2.5 py-1 text-xs"

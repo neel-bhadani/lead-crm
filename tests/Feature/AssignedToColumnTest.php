@@ -130,10 +130,22 @@ class AssignedToColumnTest extends TestCase
     /* ---------------- the null case ---------------- */
 
     /**
-     * leads.assigned_to is nullOnDelete, so deleting the staff member leaves
-     * the lead with no owner at all. (todos.assigned_to is NOT NULL and
-     * cascades, so a to-do row cannot outlive its assignee — the component
-     * still guards it, but the page cannot produce one.)
+     * A lead whose owner has been removed still sends a null owner, and the
+     * column still renders the em dash — but for a different reason than it
+     * used to, and the difference is the whole point of the user management
+     * screen.
+     *
+     * `User` soft deletes now. The `nullOnDelete` on leads.assigned_to never
+     * fires, because no DELETE ever reaches the database: the column keeps
+     * pointing at the row, which is what preserves every per-person number on
+     * the dashboard. What produces the null here is the relation — belongsTo
+     * applies the related model's soft-delete scope, so a trashed user
+     * resolves to null and the component gets exactly what it always got.
+     *
+     * In practice an *open* lead never reaches this state: deleting a user
+     * runs a handover first, so their open leads have already gone to somebody
+     * else or been deliberately unassigned. This is the historical case — a
+     * closed lead still recording who worked it.
      */
     public function test_a_lead_whose_assigned_user_was_deleted_sends_a_null_owner(): void
     {
@@ -141,7 +153,13 @@ class AssignedToColumnTest extends TestCase
 
         $this->salesperson->delete();
 
-        $this->assertNull($lead->fresh()->assigned_to);
+        $this->assertSoftDeleted('users', ['id' => $this->salesperson->id]);
+
+        // the column survives — this is the history the charts are counted from
+        $this->assertSame($this->salesperson->id, $lead->fresh()->assigned_to);
+
+        // and the relation still resolves to nothing, so the cell is an em dash
+        $this->assertNull($lead->fresh()->owner);
 
         $this->actingAs($this->admin)
             ->get('/leads?reset=1')

@@ -9,6 +9,7 @@ import ConfirmDialog from '@/Components/ConfirmDialog.vue'
 import AssignedTo from '@/Components/AssignedTo.vue'
 import FilterChips from '@/Components/FilterChips.vue'
 import { useFilterVisit, useDebouncedFilters } from '@/composables/useFilterVisit.js'
+import { brokerLabel } from '@/lib/brokerLabel.js'
 
 const props = defineProps({
   leads: Object,
@@ -30,6 +31,8 @@ const f = reactive({
   stage: props.filters.stage ?? '',
   project_id: props.filters.project_id ?? '',
   source: props.filters.source ?? '',
+  // where the leads report's "By channel partner" rows drill through to
+  channel_partner_id: props.filters.channel_partner_id ?? '',
   assigned_to: props.filters.assigned_to ?? '',
 
   // '' is All time. 'custom' is a state of this control only — the server
@@ -192,6 +195,19 @@ const ageClass = d => d === null ? 'text-slate-400'
           <option value="">All sources</option>
           <option v-for="(l, k) in options.sources" :key="k" :value="k">{{ l }}</option>
         </select>
+
+        <!--
+          The channel partner. This is the control the leads report's
+          "By channel partner" rows drill through to — a row there is a count
+          over a population, and clicking it has to open that population as a
+          list. Without a control here the filter would arrive from the report,
+          apply, and be invisible and unclearable on the page it landed on.
+        -->
+        <select v-model="f.channel_partner_id" class="w-full md:!w-52"
+                aria-label="Channel partner">
+          <option value="">All channel partners</option>
+          <option v-for="p in options.channelPartners" :key="p.id" :value="p.id">{{ p.label }}</option>
+        </select>
         <select v-if="isAdmin" v-model="f.assigned_to" class="w-full md:!w-44"
                 aria-label="Assigned to">
           <option value="">Assigned to</option>
@@ -271,7 +287,9 @@ const ageClass = d => d === null ? 'text-slate-400'
             <td class="px-4 py-3">{{ l.project?.name }}</td>
             <td class="px-4 py-3">
               {{ options.sources[l.source] }}
-              <div v-if="l.broker_name" class="text-xs text-slate-400">{{ l.broker_name }}</div>
+              <!-- the partner this lead came through, or the free text a lead
+                   from before the partner list still carries -->
+              <div v-if="brokerLabel(l)" class="text-xs text-slate-400">{{ brokerLabel(l) }}</div>
             </td>
             <td v-if="isAdmin" class="px-4 py-3"><AssignedTo :user="l.owner" /></td>
             <td class="px-4 py-3">{{ fmtDate(l.created_at) }}</td>
@@ -304,7 +322,11 @@ const ageClass = d => d === null ? 'text-slate-400'
 
           <dl class="grid grid-cols-2 gap-y-1 text-xs">
             <dt class="text-slate-400">Project</dt><dd class="text-right">{{ l.project?.name }}</dd>
-            <dt class="text-slate-400">Source</dt><dd class="text-right">{{ options.sources[l.source] }}</dd>
+            <dt class="text-slate-400">Source</dt>
+            <dd class="text-right">
+              {{ options.sources[l.source] }}
+              <span v-if="brokerLabel(l)" class="block text-slate-400">{{ brokerLabel(l) }}</span>
+            </dd>
             <template v-if="isAdmin">
               <dt class="text-slate-400">Assigned to</dt>
               <dd class="text-right"><AssignedTo :user="l.owner" /></dd>

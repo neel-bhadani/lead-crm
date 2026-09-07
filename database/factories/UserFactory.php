@@ -9,6 +9,10 @@ use Illuminate\Support\Str;
 
 /**
  * @extends Factory<User>
+ *
+ * A CRM staff account. The `name` column the Breeze factory wrote was dropped in
+ * add_crm_fields_to_users_table; a person is a first and last name here, and the
+ * role decides what they can see.
  */
 class UserFactory extends Factory
 {
@@ -18,28 +22,32 @@ class UserFactory extends Factory
     protected static ?string $password;
 
     /**
-     * Define the model's default state.
-     *
      * @return array<string, mixed>
      */
     public function definition(): array
     {
         return [
-            'name' => fake()->name(),
-            'email' => fake()->unique()->safeEmail(),
-            'email_verified_at' => now(),
-            'password' => static::$password ??= Hash::make('password'),
+            'first_name'     => fake()->firstName(),
+            'last_name'      => fake()->lastName(),
+            'email'          => fake()->unique()->safeEmail(),
+            // unique and NOT NULL-ish in practice: the Users page treats it as
+            // the second way to identify a person
+            'mobile_number'  => (string) fake()->unique()->numberBetween(9000000000, 9999999999),
+            'role'           => 'salesperson',
+            'is_active'      => true,
+            'password'       => static::$password ??= Hash::make('password'),
             'remember_token' => Str::random(10),
         ];
     }
 
-    /**
-     * Indicate that the model's email address should be unverified.
-     */
-    public function unverified(): static
+    /** @param  'admin'|'telecaller'|'salesperson'  $role */
+    public function role(string $role): static
     {
-        return $this->state(fn (array $attributes) => [
-            'email_verified_at' => null,
-        ]);
+        return $this->state(fn (array $attributes) => ['role' => $role]);
+    }
+
+    public function inactive(): static
+    {
+        return $this->state(fn (array $attributes) => ['is_active' => false]);
     }
 }

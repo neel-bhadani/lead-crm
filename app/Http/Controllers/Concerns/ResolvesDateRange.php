@@ -108,7 +108,7 @@ trait ResolvesDateRange
         return $filters + ['range' => isset($filters['from']) ? 'custom' : ''];
     }
 
-    /** The rules the two pages share for the three date keys. */
+    /** The rules every page shares for the three date keys. */
     protected function dateRangeRules(): array
     {
         return [

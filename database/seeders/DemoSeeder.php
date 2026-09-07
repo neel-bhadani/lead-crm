@@ -2,7 +2,7 @@
 
 namespace Database\Seeders;
 
-use App\Models\{User, Project, Lead, Todo};
+use App\Models\{User, Project, Lead, Todo, ChannelPartner};
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
 
@@ -46,6 +46,45 @@ class DemoSeeder extends Seeder
             'location' => $p[1],
             'created_by' => $admin->id,
         ]));
+        /*
+         | Channel partners, covering all three cases the model has to hold: a
+         | firm a lead can come through directly, brokers filed under that firm,
+         | and an individual broker under nobody.
+         |
+         | The two Ravis are deliberate. They are the reason the picker on the
+         | lead form shows "Ravi Kumar — Shreeji Realty" rather than "Ravi
+         | Kumar", and a demo without them would make that label look like
+         | decoration.
+         */
+        $firms = collect([
+            ['Shreeji Realty', 'Nita Shah'],
+            ['Anand Properties', 'Bhavin Rana'],
+        ])->map(fn ($f) => ChannelPartner::create([
+            'name'           => $f[0],
+            'type'           => 'firm',
+            'contact_person' => $f[1],
+            'phone'          => '9' . rand(100000000, 999999999),
+            'email'          => strtolower(str_replace(' ', '', $f[0])) . '@example.com',
+            'address'        => 'Ring Road, Surat',
+        ]));
+
+        $brokers = collect([
+            ['Ravi Kumar', $firms[0]->id],
+            ['Sunil Vaghela', $firms[0]->id],
+            ['Ravi Bhatt', $firms[1]->id],
+            // individual brokers: type broker, no firm behind them
+            ['Kiran Modi', null],
+            ['Hetal Solanki', null],
+        ])->map(fn ($b) => ChannelPartner::create([
+            'name'      => $b[0],
+            'type'      => 'broker',
+            'parent_id' => $b[1],
+            'phone'     => '9' . rand(100000000, 999999999),
+        ]));
+
+        // every row a lead may be attributed to — a firm directly, or a broker
+        $partners = $firms->concat($brokers);
+
         // journeys a lead can take — repeated entries make a path more likely
         $paths = [
             ['fresh'],
@@ -79,7 +118,22 @@ class DemoSeeder extends Seeder
                 'email' => 'lead' . $i . '@example.com',
                 'project_id' => $projects->random()->id,
                 'source' => $source,
-                'broker_name' => $source === 'broker' ? 'Shreeji Realty' : null,
+                /*
+                 | Broker leads split two ways on purpose, because that is what
+                 | a real database looks like the day after this feature ships.
+                 |
+                 | Most point at a partner row, which is what the form writes
+                 | now. Every fourth one carries only the old free text and no
+                 | row at all — a lead from before channel partners existed,
+                 | which nothing backfilled and nothing guessed a match for. The
+                 | Leads page falls back to that text, the report files it under
+                 | "No channel partner", and both behaviours are visible in the
+                 | demo rather than only in the tests.
+                 */
+                'broker_name' => $source === 'broker' && $i % 4 === 0 ? 'Shreeji Realty' : null,
+                'channel_partner_id' => $source === 'broker' && $i % 4 !== 0
+                    ? $partners->random()->id
+                    : null,
                 'stage' => $stage,
                 'stage_changed_at' => $created,
                 'assigned_to' => $owner->id,

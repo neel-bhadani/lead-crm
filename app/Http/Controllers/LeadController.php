@@ -5,13 +5,15 @@ namespace App\Http\Controllers;
 use App\Http\Controllers\Concerns\ResolvesDateRange;
 use App\Http\Controllers\Concerns\ResolvesFilters;
 use App\Http\Requests\LeadRequest;
+use App\Models\ChannelPartner;
 use App\Models\Lead;
 use App\Models\Project;
 use App\Models\User;
-use App\Services\FollowUpScheduler;
 use App\Services\LeadFollowUpService;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -21,10 +23,10 @@ class LeadController extends Controller
 {
     use ResolvesDateRange, ResolvesFilters;
 
-    public function __construct(
-        private LeadFollowUpService $service,
-        private FollowUpScheduler $scheduler
-    ) {}
+    /** The three fields that book a follow-up; they are not lead columns. */
+    private const FOLLOW_UP_FIELDS = ['follow_up_type', 'follow_up_at', 'follow_up_remarks'];
+
+    public function __construct(private LeadFollowUpService $service) {}
 
     public function index(Request $request)
     {
@@ -61,6 +63,8 @@ class LeadController extends Controller
             })
             ->when($filters['project_id'] ?? null, fn($q, $v) => $q->where('project_id', $v))
             ->when($filters['source'] ?? null, fn($q, $v) => $q->where('source', $v))
+            // where the leads report's "By channel partner" rows drill through to
+            ->when($filters['channel_partner_id'] ?? null, fn($q, $v) => $q->where('channel_partner_id', $v))
             ->when($filters['assigned_to'] ?? null, fn($q, $v) => $q->where('assigned_to', $v))
             // one clause, both bounds, on real datetimes rather than DATE() —
             // see dateWindow() for why the boundaries are built where they are
@@ -74,17 +78,23 @@ class LeadController extends Controller
                 // role too: the Assigned to column stacks it under the name
                 'owner:id,first_name,last_name,role',
                 'pendingTodo:id,lead_id,scheduled_at,type',
+                /*
+                 | The Source column's sub-line. `parent` comes with it because
+                 | ChannelPartner appends display_label, which reads it — a
+                 | broker under a firm has to arrive as "Ravi Kumar — Shreeji
+                 | Realty" or two Ravis are one name on this page.
+                 |
+                 | A lead with no partner sends null and the column falls back
+                 | to `broker_name`, which is where every pre-existing broker
+                 | lead's answer still lives.
+                 */
+                'channelPartner:id,name,parent_id',
+                'channelPartner.parent:id,name',
             ])
             ->latest()
             // no withQueryString(): the filters are in the session now, so a
             // page link carries nothing but its page number
-            ->paginate(15)
-            // LeadFormModal shows what a stage change would schedule; only this
-            // side knows the working hours behind that answer
-            ->through(fn($lead) => $lead->setAttribute(
-                'follow_up_previews',
-                $this->scheduler->previews($lead)
-            ));
+            ->paginate(15);
 
         return Inertia::render('Leads/Index', [
             'leads'       => $leads,
@@ -141,6 +151,7 @@ class LeadController extends Controller
                 'stage'       => ['sometimes', 'string', Rule::in(array_keys(config('crm.stages')))],
                 'project_id'  => ['sometimes', 'integer', 'min:1'],
                 'source'      => ['sometimes', 'string', Rule::in(array_keys(config('crm.sources')))],
+                'channel_partner_id' => ['sometimes', 'integer', 'min:1'],
                 'assigned_to' => ['sometimes', 'integer', 'min:1'],
             ] + $this->dateRangeRules(),
             [],
@@ -153,47 +164,57 @@ class LeadController extends Controller
         $user = $request->user();
 
         // never take assigned_to from the form
-        $owner = $user->isAdmin()
-            ? User::where('role', 'telecaller')->where('is_active', true)->value('id')
-            : $user->id;
+        $owner = $this->ownerFor($user);
 
         /*
-         | Both writes or neither. onLeadCreated() gives the lead its first
-         | pending to-do, and "an open lead always has one" is an invariant the
-         | To-do page and the scheduler both lean on — a lead that committed
+         | Both writes or neither. onLeadCreated() gives the lead the first
+         | to-do the user booked on the form, and "an open lead always has one"
+         | is an invariant the whole To-do page leans on — a lead that committed
          | while its to-do failed would break it for good, and nothing in the
          | application would notice.
          */
         try {
             DB::transaction(function () use ($request, $user, $owner) {
-                $lead = Lead::create($request->validated() + [
-                    'assigned_to'      => $owner ?? $user->id,
+                // the follow-up fields ride in on the same form and are not
+                // columns on the lead; they are the to-do about to be created
+                $lead = Lead::create($this->leadAttributes($request) + [
+                    'assigned_to'      => $owner,
                     'assigned_role'    => $user->isAdmin() ? 'telecaller' : $user->role,
                     'created_by'       => $user->id,
                     'stage_changed_at' => now(),
                     'last_activity_at' => now(),
                 ]);
 
-                $this->service->onLeadCreated($lead);
+                $this->service->onLeadCreated(
+                    $lead,
+                    $this->followUpAt($request),
+                    $request->input('follow_up_type'),
+                    $request->input('follow_up_remarks'),
+                );
             });
         } catch (UniqueConstraintViolationException $e) {
             throw $this->duplicateMobile();
         }
 
-        return back()->with('success', 'Lead added and follow-up scheduled.');
+        return back()->with('success', in_array($request->stage, config('crm.terminal_stages'), true)
+            ? 'Lead added.'
+            : 'Lead added and follow-up scheduled.');
     }
 
     public function show(Request $request, Lead $lead)
     {
-        abort_unless(
-            $request->user()->isAdmin() || $lead->assigned_to === $request->user()->id,
-            403
-        );
+        // LeadPolicy::view() — the same ownership rule visibleTo() applies to
+        // the list, said for one row, and `see_all_leads` answers it for a
+        // manager as well as an admin
+        $this->authorize('view', $lead);
 
         return response()->json([
             'lead' => $lead->load([
                 'project:id,name,location',
                 'owner:id,first_name,last_name',
+                // and its firm, which display_label reads
+                'channelPartner:id,name,parent_id',
+                'channelPartner.parent:id,name',
                 'pendingTodo',
                 'completedTodos.completer:id,first_name,last_name',
             ]),
@@ -202,12 +223,10 @@ class LeadController extends Controller
 
     public function update(LeadRequest $request, Lead $lead)
     {
-        abort_unless(
-            $request->user()->isAdmin() || $lead->assigned_to === $request->user()->id,
-            403
-        );
+        // LeadRequest::authorize() already ran LeadPolicy::update() on this
+        // same bound lead, so there is nothing left to check here
 
-        $data  = $request->validated();
+        $data  = $this->leadAttributes($request);
         $stage = $data['stage'];
         unset($data['stage']);
 
@@ -223,10 +242,17 @@ class LeadController extends Controller
 
         if ($lead->stage !== $stage) {
             $notice = $this->service->noticeFor(
-                $this->service->changeStage($lead, $stage, [
-                    'reason'      => $request->input('reason'),
-                    'booked_unit' => $request->input('booked_unit'),
-                ])
+                $this->service->changeStage(
+                    $lead,
+                    $stage,
+                    [
+                        'reason'      => $request->input('reason'),
+                        'booked_unit' => $request->input('booked_unit'),
+                    ],
+                    $this->followUpAt($request),
+                    $request->input('follow_up_type'),
+                    $request->input('follow_up_remarks'),
+                )
             );
         }
 
@@ -238,10 +264,56 @@ class LeadController extends Controller
 
     public function destroy(Lead $lead)
     {
+        // was route middleware saying `role:admin`; it is a permission now, so
+        // an admin who grants `delete_leads` to a manager gets what they asked
+        // for rather than a toggle that does nothing
+        $this->authorize('delete', $lead);
+
         $lead->todos()->where('status', 'pending')->update(['status' => 'cancelled']);
         $lead->delete();
 
         return back()->with('success', 'Lead deleted.');
+    }
+
+    /**
+     * The lead's own columns, out of a payload that also carries the follow-up
+     * this form books alongside it.
+     *
+     * The one thing normalised here is the partner link. A lead whose source is
+     * not `broker` did not come through one, so it holds no
+     * `channel_partner_id` — the modal clears the field when the source moves
+     * off broker, and this is what makes that true of a stale tab as well.
+     *
+     * `broker_name` is deliberately absent from both ends of this. It is not in
+     * validated() — see LeadRequest — so it is not written, not cleared and not
+     * touched: the text on a lead from before channel partners existed survives
+     * every edit made after them.
+     *
+     * @return array<string, mixed>
+     */
+    private function leadAttributes(LeadRequest $request): array
+    {
+        $data = Arr::except($request->validated(), self::FOLLOW_UP_FIELDS);
+
+        if (($data['source'] ?? null) !== 'broker') {
+            $data['channel_partner_id'] = null;
+        }
+
+        return $data;
+    }
+
+    /**
+     * The follow-up datetime the user typed, as a Carbon in the app timezone,
+     * or null when the form did not ask for one.
+     *
+     * Parsed and never adjusted. It is a moment a person chose, and there is
+     * nothing left in the application that would move it.
+     */
+    private function followUpAt(Request $request): ?Carbon
+    {
+        return $request->filled('follow_up_at')
+            ? Carbon::parse($request->input('follow_up_at'))
+            : null;
     }
 
     /**
@@ -293,7 +365,7 @@ class LeadController extends Controller
         $user = $request->user();
 
         // a salesperson must not learn who owns someone else's lead
-        $canSee = $user->isAdmin() || $lead->assigned_to === $user->id;
+        $canSee = $user->can('view', $lead);
 
         return response()->json([
             'exists'  => true,
@@ -303,10 +375,43 @@ class LeadController extends Controller
         ]);
     }
 
+    /**
+     * Who a lead added right now would belong to.
+     *
+     * An admin files leads onto the telecaller who takes them; everybody else
+     * keeps their own. The fallback matters in a young database and in a small
+     * office: with no active telecaller the lead stays with the admin rather
+     * than landing on nobody, because `todos.assigned_to` is NOT NULL and a
+     * lead with no owner is a lead on no list.
+     *
+     * A method rather than the expression inline, because two things ask the
+     * question now — store(), which acts on the answer, and options(), which
+     * ships it to the add-lead form so the clash warning can name the right
+     * person. Those two disagreeing would put a stranger's name in the warning.
+     */
+    private function ownerFor(User $user): int
+    {
+        $owner = $user->isAdmin()
+            ? User::where('role', 'telecaller')->where('is_active', true)->value('id')
+            : $user->id;
+
+        return (int) ($owner ?? $user->id);
+    }
+
     private function options($user): array
     {
         return [
             'stages'      => config('crm.stages'),
+            /*
+             | Who a NEW lead would be assigned to, for the follow-up clash
+             | warning on the add-lead form and for nothing else.
+             |
+             | Read-only and advisory. store() calls ownerFor() itself and takes
+             | no owner from the request, so a tampered value changes a sentence
+             | on screen and cannot change a single row. An existing lead is not
+             | covered by this — the form reads that one's own assigned_to.
+             */
+            'defaultOwnerId' => $this->ownerFor($user),
             'stageColors' => config('crm.stage_colors'),
             // today in IST. The date inputs use this as their max rather than
             // the browser clock, which may be in another timezone entirely.
@@ -314,17 +419,80 @@ class LeadController extends Controller
             'sources'     => config('crm.sources'),
             'reasons'     => config('crm.lost_reasons'),
             'projects'    => Project::active()->get(['id', 'name']),
-            'roleLabels'  => config('crm.role_labels'),
             /*
-             | The create case is a different question from a stage change:
-             | onLeadCreated() gives a new lead its first task straight away
-             | rather than after an interval, so it gets its own preview.
+             | The picker that replaced the free-text broker field.
+             |
+             | Active partners only, firms and brokers alike — a lead can come
+             | through the firm itself, through a broker inside it, or through
+             | an individual broker with no firm at all, and all three are rows
+             | here. `parent` is eager loaded so a broker arrives labelled
+             | "Ravi Kumar — Shreeji Realty" rather than as one of two Ravis.
+             |
+             | Firms first, then brokers, each alphabetically — the same order
+             | the Channel Partners page uses.
+             |
+             | Everyone who can reach the lead form gets this list, not only
+             | admins: a telecaller filing a broker lead has to be able to name
+             | the broker. That is a narrower thing than the roster on
+             | /channel-partners, which carries phone numbers, addresses and
+             | contact people and stays behind `role:admin`.
              */
-            'followUpPreviews' => $this->scheduler->previewsForNewLead(),
-            'users'       => $user->isAdmin()
+            'channelPartners' => ChannelPartner::active()
+                ->with('parent:id,name')
+                ->orderByRaw("CASE type WHEN 'firm' THEN 0 ELSE 1 END")
+                ->orderBy('name')
+                ->get(['id', 'name', 'type', 'parent_id'])
+                ->map(fn (ChannelPartner $p) => [
+                    'id'    => $p->id,
+                    // the raw name as well as the joined label: the near-match
+                    // warning compares names, and similarity-keying
+                    // "Ravi Kumar — Shreeji Realty" would fold the firm into
+                    // the broker's own name and never match a bare "Ravi Kumar"
+                    'name'  => $p->name,
+                    'label' => $p->display_label,
+                    'type'  => $p->type,
+                ]),
+
+            /*
+             | What the inline "add a partner" form on this modal needs, and
+             | nothing more: the two type labels, and the active firms a new
+             | broker may be filed under.
+             |
+             | Shipped to everyone who can reach the lead form rather than to
+             | admins only, for the same reason the partner list itself is: a
+             | salesperson logging a broker lead has to be able to say which
+             | firm that broker works for. These are names, not the roster —
+             | the phone numbers, addresses and contact people stay behind
+             | `role:admin` on the Channel Partners page.
+             */
+            'partnerTypes' => config('crm.channel_partner_types'),
+            'partnerFirms' => ChannelPartner::firms()->active()
+                ->orderBy('name')
+                ->get(['id', 'name'])
+                ->map(fn (ChannelPartner $f) => ['id' => $f->id, 'name' => $f->name]),
+            'roleLabels'  => config('crm.role_labels'),
+            // the follow-up the form now books itself: what kind of task it is,
+            // and which stages end the chain instead of continuing it
+            'types'          => config('crm.todo_types'),
+            'terminalStages' => config('crm.terminal_stages'),
+            'handoverStage'  => config('crm.handover_stage'),
+            // the Assigned-to filter only means anything to someone who can
+            // see past their own rows
+            'users'       => $user->can_('see_all_leads')
                 ? User::whereIn('role', ['telecaller', 'salesperson'])
                 ->get(['id', 'first_name', 'last_name'])
                 : [],
+            /*
+             | What this user may do, resolved server-side. The page shows or
+             | hides Add / Edit / Delete from these rather than from the role,
+             | so a telecaller granted `add_leads` gets the button — and the
+             | policy is still what actually decides on the way back in.
+             */
+            'can'         => [
+                'add'    => $user->can_('add_leads'),
+                'edit'   => $user->can_('edit_leads'),
+                'delete' => $user->can_('delete_leads'),
+            ],
         ];
     }
 }

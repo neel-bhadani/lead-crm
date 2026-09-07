@@ -1,8 +1,9 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Head, Link, router, usePage } from '@inertiajs/vue3'
 import AppLayout from '@/Layouts/AppLayout.vue'
 import ChartCard from '@/Components/ChartCard.vue'
+import DateRangePicker from '@/Components/DateRangePicker.vue'
 import StageBadge from '@/Components/StageBadge.vue'
 import CompleteTaskModal from '@/Components/CompleteTaskModal.vue'
 import CallButtons from '@/Components/CallButtons.vue'
@@ -26,80 +27,22 @@ const isAdmin = computed(() => usePage().props.auth.user.role === 'admin')
 
 /* ---------------- date range ---------------- */
 
-const presets = [
-  { key: 'today', label: 'Today' },
-  { key: '7',     label: 'Last 7 days' },
-  { key: '30',    label: 'Last 30 days' },
-]
-
-const pickerOpen = ref(false)
-const draft = ref({ from: props.range.from, to: props.range.to })
-const pickerError = ref('')
-
-const isCustom = computed(() => props.range.key === 'custom')
-
-// once a custom range is applied the button carries it, e.g. "1 Jun – 15 Jun"
-const customLabel = computed(() => isCustom.value ? props.range.label : 'Custom')
-
-const { visit, cleanUrl } = useFilterVisit(route('dashboard'))
-
 /*
- | A preset and a custom pair are alternatives, so each visit names only the
- | one being chosen and carries reset=1 with it. The request is then the whole
- | instruction — what is missing is off — so yesterday's custom dates cannot
- | sit in the session outranking the preset the user just clicked. See
+ | The control itself is DateRangePicker, shared with the two report pages, so
+ | the presets, their order, their labels and the custom popover are one thing
+ | in one file rather than three that have to be kept in step. What stays here
+ | is the only part that was ever the dashboard's own: what a choice does.
+ |
+ | A preset and a custom pair are alternatives, so each visit names only the one
+ | being chosen and carries reset=1 with it. The request is then the whole
+ | instruction — what is missing is off — so yesterday's custom dates cannot sit
+ | in the session outranking the preset the user just clicked. See
  | withoutEmpty() in the composable for why the reset and the dropped empties
  | belong together.
  */
-const setRange = key => {
-  pickerOpen.value = false
-  visit({ reset: 1, range: key })
-}
+const { visit, cleanUrl } = useFilterVisit(route('dashboard'))
 
-const openPicker = () => {
-  draft.value = { from: props.range.from, to: props.range.to }
-  pickerError.value = ''
-  pickerOpen.value = true
-}
-
-const closePicker = () => {
-  pickerOpen.value = false
-  pickerError.value = ''
-}
-
-/*
- | Both dates are ISO yyyy-mm-dd, so they compare correctly as plain strings
- | and none of this has to build a Date. That matters here: the browser may be
- | in any timezone, and `range.today` is today in IST as the server sees it.
- */
-const spanDays = (from, to) =>
-  Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000) + 1
-
-// the same rules the server applies, so an invalid range is never sent
-const validate = ({ from, to }) => {
-  if (!from || !to) return 'Choose both a From and a To date.'
-  if (from > to) return 'From must not be after To.'
-  if (to > props.range.today) return 'To must not be in the future.'
-  if (spanDays(from, to) > props.range.maxSpanDays) return 'Choose a range of two years or less.'
-  return ''
-}
-
-const applyCustom = () => {
-  pickerError.value = validate(draft.value)
-
-  if (pickerError.value) return
-
-  pickerOpen.value = false
-  visit({ reset: 1, from: draft.value.from, to: draft.value.to })
-}
-
-// clear a stale complaint as soon as the user starts fixing it
-watch(draft, () => { pickerError.value = '' }, { deep: true })
-
-// Escape closes it from anywhere, not only from inside the two date fields
-const onKeydown = e => { if (e.key === 'Escape') closePicker() }
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+const setRange = choice => visit({ reset: 1, ...choice })
 
 /*
  | The chart configs below read this to place a legend and size a bar. It used
@@ -592,60 +535,7 @@ onBeforeUnmount(() => { stopBefore(); stopSuccess() })
 
   <AppLayout title="Dashboard" subtitle="Overview of leads and follow-ups">
     <template #actions>
-      <div class="relative w-full sm:w-auto">
-        <div class="flex w-full overflow-hidden rounded-lg border border-slate-200 bg-white sm:w-auto">
-          <button
-            v-for="r in presets" :key="r.key"
-            class="flex-1 whitespace-nowrap border-r border-slate-200 px-2.5 py-2 text-xs sm:px-3 sm:text-sm"
-            :class="range.key === r.key ? 'bg-slate-900 text-white' : 'text-slate-500'"
-            @click="setRange(r.key)"
-          >{{ r.label }}</button>
-
-          <button
-            class="flex-1 whitespace-nowrap px-2.5 py-2 text-xs sm:px-3 sm:text-sm"
-            :class="isCustom ? 'bg-slate-900 text-white' : 'text-slate-500'"
-            aria-haspopup="dialog"
-            :aria-expanded="pickerOpen"
-            @click="pickerOpen ? closePicker() : openPicker()"
-          >{{ customLabel }}</button>
-        </div>
-
-        <!-- click-away target; also the scrim behind the sheet on a phone -->
-        <div v-if="pickerOpen" class="fixed inset-0 z-30 bg-slate-900/40 sm:bg-transparent"
-             @click="closePicker" />
-
-        <!--
-          A sheet on phones and a popover on wider screens. Either way it is
-          taken out of flow, so opening it never pushes the header apart.
-        -->
-        <div
-          v-if="pickerOpen"
-          class="fixed inset-x-3 bottom-3 z-40 rounded-xl border border-slate-200 bg-white p-4 shadow-xl
-                 sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:top-full sm:mt-2 sm:w-72"
-          role="dialog" aria-label="Custom date range"
-        >
-          <div class="grid grid-cols-2 gap-3">
-            <label class="block">
-              <span class="mb-1 block text-xs font-semibold text-slate-500">From</span>
-              <input v-model="draft.from" type="date" :max="range.today" class="w-full text-sm" />
-            </label>
-            <label class="block">
-              <span class="mb-1 block text-xs font-semibold text-slate-500">To</span>
-              <input v-model="draft.to" type="date" :min="draft.from" :max="range.today"
-                     class="w-full text-sm" />
-            </label>
-          </div>
-
-          <p v-if="pickerError" class="mt-2.5 text-xs font-medium text-rose-700" role="alert">
-            {{ pickerError }}
-          </p>
-
-          <div class="mt-4 flex justify-end gap-2">
-            <button type="button" class="btn-ghost" @click="closePicker">Cancel</button>
-            <button type="button" class="btn" @click="applyCustom">Apply</button>
-          </div>
-        </div>
-      </div>
+      <DateRangePicker :range="range" :presets="options.ranges" @select="setRange" />
     </template>
 
     <!-- KPI strip -->
@@ -775,8 +665,10 @@ onBeforeUnmount(() => { stopBefore(); stopSuccess() })
               time and the buttons landed at a different x on every line. A
               fixed track makes the column a property of the panel rather than
               of the row. 11rem is the button cluster (two 36px icon links, a
-              6px gap each side and a ~73px Log call) with room to spare, so a
+              6px gap each side and the Update button) with room to spare, so a
               font that renders a little wide cannot push it out of the track.
+              The track was measured against a wider label than the one there
+              now, so the slack has only grown since.
             -->
             <div v-for="t in p.rows" :key="t.id"
                  class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2
@@ -826,7 +718,7 @@ onBeforeUnmount(() => { stopBefore(); stopSuccess() })
                 to the data. Call and WhatsApp are the icon-only outline variant
                 CallButtons already ships for the To-do table — no fork, no
                 second style — and the arbitrary variant only evens their height
-                up with Log call so the three read as one control group.
+                up with Update so the three read as one control group.
               -->
               <div class="col-span-2 flex items-center justify-end gap-1.5 sm:col-span-1">
                 <CallButtons v-if="t.lead?.mobile_number" compact
@@ -834,7 +726,7 @@ onBeforeUnmount(() => { stopBefore(); stopSuccess() })
 
                 <button type="button"
                         class="btn whitespace-nowrap px-2.5 py-1.5 text-xs"
-                        @click="openComplete(t)">Log call</button>
+                        @click="openComplete(t)">Update</button>
               </div>
             </div>
           </div>
@@ -843,7 +735,7 @@ onBeforeUnmount(() => { stopBefore(); stopSuccess() })
              class="border-t border-slate-100 px-5 py-3 text-xs text-slate-400">
             Showing first {{ p.rows.length }} of {{ p.total }} —
             <Link :href="route('todos.index', { tab: p.tab })" class="underline hover:text-teal-700">
-              open the To-do page to see all.</Link>
+              open the Follow-ups page to see all.</Link>
           </p>
         </div>
       </div>

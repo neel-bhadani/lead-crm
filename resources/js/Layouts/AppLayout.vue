@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Link, router, usePage } from '@inertiajs/vue3'
 
 defineProps({ title: String, subtitle: String })
@@ -8,11 +8,144 @@ const page = usePage()
 const user = computed(() => page.props.auth.user)
 const open = ref(false)
 
+/*
+ | Channel Partners, Users and Integrations are admin-only and are left out of
+ | the array rather than rendered disabled — a greyed link advertises a page
+ | somebody cannot reach. This is presentation only: `role:admin` on each route
+ | group is what actually refuses a telecaller who types /channel-partners,
+ | /users or /integrations into the address bar, and all three come back 403
+ | rather than empty.
+ |
+ | Channel Partners sits next to Leads rather than next to Users, because it is
+ | reference data the Leads page reads — the broker picker on the lead form is
+ | this list — and not a staff-administration screen.
+ */
 const nav = computed(() => [
   { name: 'Dashboard', href: route('dashboard'), active: route().current('dashboard') },
   { name: 'Leads',     href: route('leads.index'), active: route().current('leads.*') },
-  { name: 'To-do',     href: route('todos.index'), active: route().current('todos.*') },
+  { name: 'Follow-ups', href: route('todos.index'), active: route().current('todos.*') },
+  ...(user.value?.role === 'admin'
+    ? [
+        {
+          name: 'Channel Partners',
+          href: route('channel-partners.index'),
+          active: route().current('channel-partners.*'),
+        },
+        { name: 'Users', href: route('users.index'), active: route().current('users.*') },
+        /*
+         | Integrations is last because it is the one nobody opens twice: it is
+         | set up once and then only visited when leads have stopped arriving.
+         |
+         | Admin-only here and admin-only for real — `role:admin` on the route
+         | group in routes/web.php is what refuses a telecaller who types
+         | /integrations, and they get a 403 rather than an empty page. Leaving
+         | the link out is presentation; the middleware is the answer.
+         */
+        {
+          name: 'Integrations',
+          href: route('integrations.index'),
+          active: route().current('integrations.*'),
+        },
+      ]
+    : []),
 ])
+
+/*
+ | Reports: seven links, two pages.
+ |
+ | Every link is one of the two report routes with a different `group` in the
+ | query string — "Leads · By source" and "Leads · By project" are the same page
+ | asked a different question, and six routes would have been six copies of one
+ | filter bar, one chart and one table.
+ |
+ | Both sections list groupings and nothing else. The four Follow-ups statuses
+ | used to sit here too, and that was the bug: a follow-ups report is always a
+ | grouping AND a status, so a flat list of both meant two items described the
+ | page and two items lit up. They are two axes, so they get two controls — the
+ | statuses are tabs on the page now, where a second axis can sit beside the
+ | first without either pretending to be the whole selection.
+ |
+ | With one axis per section the items are genuine alternatives: they name the
+ | same key with different values, so at most one can match and exactly one
+ | does.
+ |
+ | The assigned-to links are left out for anyone who cannot see past their own
+ | rows, on the same test each report uses to decide whether to offer the
+ | grouping at all — every row would be that person. Presentation only: the
+ | privacy boundary is scopeVisibleTo and scopeForUser inside ReportController,
+ | and a telecaller who types the query string is given the default grouping
+ | over their own data rather than a 403.
+ */
+const wideLeads = computed(() => !! user.value?.seeAllLeads)
+const wideTodos = computed(() => user.value?.role === 'admin')
+
+const withHrefs = (routeName, items) =>
+    items.map(i => ({ ...i, href: route(routeName, { group: i.group }) }))
+
+const reports = computed(() => [
+  {
+    name: 'Leads',
+    routeName: 'reports.leads',
+    items: withHrefs('reports.leads', [
+      { name: 'By stage',   group: 'stage' },
+      { name: 'By source',  group: 'source' },
+      { name: 'By project', group: 'project' },
+      /*
+       | Not gated, unlike By assigned to. Partner names are not admin-only —
+       | the lead form's broker picker offers the same list to everyone who can
+       | file a lead — and the counts on the report are scoped to the viewer's
+       | own leads by scopeVisibleTo, exactly as By source is. The roster with
+       | its phone numbers and addresses is the admin-only thing, and that is
+       | the Channel Partners page above.
+       */
+      { name: 'By channel partner', group: 'channel_partner' },
+      ...(wideLeads.value ? [{ name: 'By assigned to', group: 'assigned_to' }] : []),
+    ]),
+  },
+  {
+    name: 'Follow-ups',
+    routeName: 'reports.followups',
+    items: withHrefs('reports.followups', [
+      { name: 'By type',        group: 'type' },
+      ...(wideTodos.value ? [{ name: 'By assigned to', group: 'assigned_to' }] : []),
+    ]),
+  },
+])
+
+const onReports = computed(() => route().current('reports.*'))
+
+/*
+ | Closed by default, and the click is the last word.
+ |
+ | Ten items left permanently open dominate a sidebar whose other four are one
+ | line each, so the group starts shut and opens on two occasions: the user
+ | opens it, or they arrive on a report — landing on a page whose menu entry is
+ | hidden behind a closed heading is disorienting, and the watcher covers that
+ | because AppLayout survives an Inertia visit and `setup` does not run again.
+ |
+ | It is a ref the watcher writes rather than `open || onReports`, which is what
+ | it was: that version could not be closed while you were standing on a report,
+ | because the computed put it straight back open on the next tick.
+ */
+const showReports = ref(false)
+
+watch(onReports, (isOn) => { if (isOn) showReports.value = true }, { immediate: true })
+
+/*
+ | Which child link is the one you are on.
+ |
+ | The grouping, and nothing else. Every item in both sections is a grouping, so
+ | this compares one key against one key — which is what stops two items
+ | claiming the same page. The status is a separate axis with a separate control
+ | on the page, and it has no say here: changing tab must not move the sidebar,
+ | and changing grouping must not move the tabs.
+ |
+ | The answer comes from the resolved filters rather than from the URL, because
+ | route().current() cannot tell two links to the same route apart, and because
+ | the address bar is wiped clean once the visit lands.
+ */
+const activeChild = (group, item) =>
+  route().current(group.routeName) && (page.props.filters ?? {}).group === item.group
 
 const logout = () => router.post(route('logout'))
 
@@ -38,30 +171,109 @@ onUnmounted(() => window.removeEventListener('scroll', onScroll))
     <div v-show="open" class="fixed inset-0 z-30 bg-slate-900/45 lg:hidden" @click="open = false" />
 
     <!-- sidebar -->
+    <!--
+      Three regions, and only the middle one scrolls.
+      
+      The brand and the user block are `shrink-0`, so a flex column can never
+      squeeze them to make room for a long menu. The nav is `flex-1 min-h-0`:
+      a flex item's automatic minimum size is its content, and a scroll
+      container is exempt from that only for as long as it stays a scroll
+      container — `min-h-0` says it outright, so the rule holds even if the
+      overflow value is ever changed here.
+
+      The padding moved off the aside and onto the three regions. On the aside
+      it was a frame around all three, which is why the user block used to float
+      20px clear of the bottom edge instead of sitting on it, and why scrolled
+      menu items stopped short of the edge rather than running under it.
+    -->
     <aside
-      class="fixed inset-y-0 left-0 z-40 flex w-60 flex-col bg-slate-900 py-5 text-white
+      class="fixed inset-y-0 left-0 z-40 flex w-60 flex-col bg-slate-900 text-white
              transition-transform duration-200 lg:translate-x-0"
       :class="open ? 'translate-x-0' : '-translate-x-full'"
     >
-      <div class="flex items-center gap-2 border-b border-white/10 px-5 pb-5 font-bold">
+      <div class="flex shrink-0 items-center gap-2 border-b border-white/10 px-5 pb-4 pt-5 font-bold">
         <span class="block h-6 w-6 rounded border-2 border-teal-500"></span>
         Leads CRM
         <button class="ml-auto text-xl text-slate-400 lg:hidden" @click="open = false">&times;</button>
       </div>
 
-      <nav class="flex-1 p-3">
+      <!--
+        overscroll-contain so reaching the end of the menu on a phone does not
+        hand the rest of the gesture to the page behind the drawer.
+      -->
+      <nav class="nav-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
         <Link
           v-for="item in nav" :key="item.name" :href="item.href"
-          class="mb-0.5 flex items-center gap-3 rounded-lg px-3 py-2.5 font-medium"
+          class="mb-0.5 flex items-center gap-3 rounded-lg px-3 py-2.5 font-medium transition-colors"
           :class="item.active ? 'bg-teal-700 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-white'"
           @click="open = false"
         >{{ item.name }}</Link>
+
+        <!--
+          Reports is a disclosure, not a link. There is no /reports landing page
+          to send anyone to — the section is its two report pages — so the
+          heading opens the group and the children are what navigate.
+
+          Being inside the section is NOT the same as being the selection. The
+          parent goes white against its slate-400 siblings and takes no fill;
+          the teal fill is reserved for the one thing that is actually selected,
+          which is a child. Filling both made the sidebar read as two selections
+          at once.
+        -->
+        <button
+          class="mb-0.5 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left font-medium
+                 transition-colors"
+          :class="onReports ? 'text-white' : 'text-slate-400 hover:bg-white/5 hover:text-white'"
+          :aria-expanded="showReports" aria-controls="reports-nav"
+          @click="showReports = !showReports"
+        >
+          Reports
+          <!--
+            A plain stroked chevron in the text's own colour, so it belongs to
+            the row rather than sitting on it. It was a ▶ glyph, which the
+            emoji font renders as a filled blue triangle at whatever size it
+            likes — the one element in the sidebar that matched nothing else.
+          -->
+          <svg class="ml-auto h-3.5 w-3.5 transition-transform duration-200"
+               :class="showReports ? 'rotate-90' : ''"
+               viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+               aria-hidden="true">
+            <path d="M9 6l6 6-6 6" />
+          </svg>
+        </button>
+
+        <!--
+          Tighter than the top level, deliberately: half the vertical padding
+          and no gap under the group labels, so ten children read as one block
+          belonging to the row above rather than as ten more nav items. It is
+          also what keeps the whole menu inside a laptop viewport with the
+          group open.
+        -->
+        <div v-show="showReports" id="reports-nav" class="mb-1 ml-3 border-l border-white/10 pl-2">
+          <div v-for="group in reports" :key="group.name">
+            <div class="px-3 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              {{ group.name }}
+            </div>
+
+            <Link
+              v-for="item in group.items" :key="item.name" :href="item.href"
+              class="block rounded-md px-3 py-1 text-sm transition-colors"
+              :class="activeChild(group, item)
+                ? 'bg-teal-700 font-medium text-white'
+                : 'text-slate-400 hover:bg-white/5 hover:text-white'"
+              @click="open = false"
+            >{{ item.name }}</Link>
+          </div>
+        </div>
       </nav>
 
-      <div class="mx-3 border-t border-white/10 px-3 py-4">
-        <div class="text-sm font-semibold">{{ user.name }}</div>
-        <div class="text-xs capitalize text-slate-400">{{ user.role }}</div>
-        <button class="mt-2 text-xs text-slate-400 hover:text-white" @click="logout">Sign out</button>
+      <div class="shrink-0 px-5 py-4">
+        <div class="border-t border-white/10 pt-4">
+          <div class="text-sm font-semibold">{{ user.name }}</div>
+          <div class="text-xs capitalize text-slate-400">{{ user.role }}</div>
+          <button class="mt-2 text-xs text-slate-400 hover:text-white" @click="logout">Sign out</button>
+        </div>
       </div>
     </aside>
 

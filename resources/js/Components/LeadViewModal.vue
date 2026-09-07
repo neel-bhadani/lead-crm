@@ -3,6 +3,7 @@ import { ref, watch } from 'vue'
 import axios from 'axios'
 import Modal from './Modal.vue'
 import StageBadge from './StageBadge.vue'
+import { brokerLabel } from '@/lib/brokerLabel.js'
 
 const props = defineProps({ show: Boolean, leadId: Number, options: Object })
 const emit = defineEmits(['close', 'edit'])
@@ -44,7 +45,9 @@ const color = s => props.options.stageColors?.[s] ?? '#8A94A0'
         <div><dt class="text-[11px] font-semibold text-slate-400">Source</dt>
              <dd class="text-sm">
                {{ options.sources[lead.source] }}
-               <span v-if="lead.broker_name" class="text-slate-400">· {{ lead.broker_name }}</span>
+               <!-- the partner row if the lead has one, the old free text if it
+                    does not — see lib/brokerLabel.js -->
+               <span v-if="brokerLabel(lead)" class="text-slate-400">· {{ brokerLabel(lead) }}</span>
              </dd></div>
         <div><dt class="text-[11px] font-semibold text-slate-400">Stage</dt>
              <dd class="mt-0.5"><StageBadge :stage="lead.stage" /></dd></div>

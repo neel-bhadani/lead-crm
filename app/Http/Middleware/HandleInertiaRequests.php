@@ -26,6 +26,17 @@ class HandleInertiaRequests extends Middleware
                     'name'  => $user->display_name,
                     'email' => $user->email,
                     'role'  => $user->role,
+                    /*
+                     | Resolved server-side, because it is a permission and not
+                     | a role: a sales manager granted see_all_leads is not an
+                     | admin but does see the whole pipeline. AppLayout reads it
+                     | to decide whether the Reports group lists its assigned-to
+                     | links, so the sidebar offers exactly what
+                     | ReportController::dimensions() offers. Presentation only —
+                     | scopeVisibleTo is what actually decides which rows come
+                     | back, whatever the sidebar shows.
+                     */
+                    'seeAllLeads' => $user->can_('see_all_leads'),
                 ] : null,
             ],
 
