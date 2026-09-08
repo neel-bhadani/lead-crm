@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\AlertService;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
@@ -39,6 +40,37 @@ class HandleInertiaRequests extends Middleware
                     'seeAllLeads' => $user->can_('see_all_leads'),
                 ] : null,
             ],
+
+            /*
+             | The bell, on every page.
+             |
+             | Shared rather than fetched, because a header that has to make its
+             | own request would show a stale or empty count for the first
+             | second of every navigation — and the count is the entire point of
+             | a bell. Two cheap indexed queries: a COUNT and ten rows.
+             |
+             | The list includes alerts that have already been read. A bell that
+             | emptied itself the moment you looked at it gives you no way back
+             | to the one you glanced at and closed; the COUNT is what tracks
+             | unread, the list is recent history.
+             |
+             | Nothing here needs a visibility check. An alert names its
+             | recipient, and whether that person should ever have been told
+             | about the lead was settled before the row was written — see
+             | AlertService::raise().
+             */
+            'alerts' => $user ? fn () => [
+                'unread' => app(AlertService::class)->unreadCount($user),
+                'recent' => app(AlertService::class)->recent($user)->map(fn ($alert) => [
+                    'id'         => $alert->id,
+                    'title'      => $alert->title,
+                    'body'       => $alert->body,
+                    'severity'   => $alert->severity,
+                    'read'       => $alert->read_at !== null,
+                    'created_at' => $alert->created_at?->toIso8601String(),
+                    'lead'       => $alert->lead?->full_name,
+                ]),
+            ] : null,
 
             // read once in AppLayout and shown as a toast
             'flash' => [

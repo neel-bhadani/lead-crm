@@ -1,0 +1,14 @@
+users                  4
+projects               3
+leads                  55
+todos                  207
+channel_partners       7
+integrations           0
+integration_events     0
+automation_rules       8
+message_templates      6
+alerts                 27
+automation_logs        0
+message_logs           0
+
+INVARIANT open leads with no pending todo: 0

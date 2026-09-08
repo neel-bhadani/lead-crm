@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Link, router, usePage } from '@inertiajs/vue3'
+import AlertBell from '../Components/AlertBell.vue'
 
 defineProps({ title: String, subtitle: String })
 
@@ -24,8 +25,38 @@ const nav = computed(() => [
   { name: 'Dashboard', href: route('dashboard'), active: route().current('dashboard') },
   { name: 'Leads',     href: route('leads.index'), active: route().current('leads.*') },
   { name: 'Follow-ups', href: route('todos.index'), active: route().current('todos.*') },
+  /*
+   | Alerts is for everyone, and deliberately so. A telecaller is told about
+   | their own overdue follow-ups and carries an unread count in the header on
+   | every page; hiding the page they would land on would leave that count
+   | pointing at nothing. Each person sees only the alerts addressed to them.
+   */
+  { name: 'Alerts', href: route('alerts.index'), active: route().current('alerts.*') },
   ...(user.value?.role === 'admin'
     ? [
+        /*
+         | Automation sits directly under Alerts because the two are read
+         | together: a rule raises an alert, and the alert is how you find out
+         | the rule did something. Admin-only here and admin-only for real —
+         | `role:admin` on the route group is what refuses a telecaller who
+         | types /automation, and they get a 403 rather than an empty page.
+         */
+        {
+          name: 'Automation',
+          href: route('automation.index'),
+          active: route().current('automation.*'),
+        },
+        /*
+         | Projects and Channel Partners sit together because they are the same
+         | kind of thing: reference data the Add lead form reads, not staff
+         | administration. Projects is first of the two — every lead in the
+         | database points at one, and a broker is optional.
+         |
+         | Admin-only here and admin-only for real: `role:admin` on the route
+         | group is what refuses a telecaller who types /projects, and they get
+         | a 403 rather than an empty page.
+         */
+        { name: 'Projects', href: route('projects.index'), active: route().current('projects.*') },
         {
           name: 'Channel Partners',
           href: route('channel-partners.index'),
@@ -309,8 +340,17 @@ onUnmounted(() => window.removeEventListener('scroll', onScroll))
             <p v-if="subtitle" class="truncate text-sm text-slate-500">{{ subtitle }}</p>
           </div>
         </div>
-        <div class="hidden w-full flex-wrap items-center gap-2 sm:flex sm:w-auto">
-          <slot name="actions" />
+        <!--
+          The bell sits in the stuck header on every page and at every width,
+          outside the actions block that collapses onto its own row below sm.
+          An unread count that disappeared on a phone would be an unread count
+          nobody acted on.
+        -->
+        <div class="flex items-center gap-2">
+          <AlertBell />
+          <div class="hidden flex-wrap items-center gap-2 sm:flex">
+            <slot name="actions" />
+          </div>
         </div>
       </header>
 

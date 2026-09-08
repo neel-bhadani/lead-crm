@@ -121,6 +121,15 @@ class User extends Authenticatable
         return $this->leads()->open();
     }
 
+    /**
+     * The bell. Addressed to this user by name — an admin does not read
+     * everybody else's alerts, they read the ones raised to them.
+     */
+    public function alerts()
+    {
+        return $this->hasMany(Alert::class);
+    }
+
     public function pendingTodos()
     {
         return $this->todos()->where('status', 'pending');

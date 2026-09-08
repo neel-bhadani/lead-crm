@@ -16,6 +16,20 @@ return [
 
     'terminal_stages' => ['booking_done', 'lost'],
 
+    /*
+     | What kind of development a project is. Two of them, and the only place
+     | the words are written down — ProjectRequest validates against these keys
+     | and the project modal's dropdown renders from them, so the rule and the
+     | control cannot disagree.
+     |
+     | The column already defaults to `residential`, so every project that
+     | existed before this screen did reads as one without a backfill.
+     */
+    'project_types' => [
+        'residential' => 'Residential',
+        'commercial'  => 'Commercial',
+    ],
+
     'stage_colors' => [
         'fresh'                => '#8A94A0',
         'connected'            => '#2F6FB0',
@@ -110,6 +124,26 @@ return [
         'admin'       => 'Admin',
         'telecaller'  => 'Telecaller',
         'salesperson' => 'Sales',
+    ],
+
+    /*
+     | The same three roles, written out in full.
+     |
+     | `role_labels` above is abbreviated on purpose — it sits on a sub-line
+     | under a name in a table cell and has to stay out of the way. That
+     | abbreviation is wrong everywhere the role appears in a sentence:
+     | "assign it round-robin to a sales" is not English, and the Automation
+     | page's plain-words rule preview is built out of exactly these fragments.
+     |
+     | Two maps rather than one, because they are answering two different
+     | questions — "what is the shortest thing that still identifies this role"
+     | and "what do you call one of these people". RuleCatalog reads this one;
+     | every table still reads the one above.
+     */
+    'role_words' => [
+        'admin'       => 'Admin',
+        'telecaller'  => 'Telecaller',
+        'salesperson' => 'Salesperson',
     ],
 
     /*
@@ -345,5 +379,57 @@ return [
         ['key' => 'today', 'label' => 'Today'],
         ['key' => '7',     'label' => 'Last 7 days'],
         ['key' => '30',    'label' => 'Last 30 days'],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Alerts
+    |--------------------------------------------------------------------------
+    |
+    | An alert is a message to a person inside the CRM. It is not a follow-up:
+    | it is not scheduled work, it belongs to nobody's day, and reading one
+    | changes nothing about the lead. See App\Models\Alert.
+    |
+    | The four built-in alerts need no rule and cannot be switched off — they
+    | are the things an office would notice for itself if it had time to look.
+    | The hourly `automation:run` command raises them.
+    |
+    | `dedupe_hours` is the number that decides whether anybody uses this
+    | feature. The hourly command asks "which follow-ups are more than three
+    | days overdue" every hour, and the answer is the same lead every hour: at
+    | 24 alerts a day per lead the bell is noise by tomorrow morning and the
+    | admin stops looking at it. The same type, for the same lead and the same
+    | person, is refused within this window — refused at creation, in
+    | AlertService::raise(), not filtered out on display. Filtering would leave
+    | the bell counting rows nobody can see.
+    |
+    | The vocabulary of a RULE's alerts — recipients, severities — lives in
+    | config/automation.php with the rest of the rule catalogue. This block is
+    | only the thresholds the built-in ones measure against.
+    */
+    'alerts' => [
+
+        // a follow-up this many days past its date is worth telling somebody
+        'overdue_days' => 3,
+
+        // a lead that has not moved stage in this many days has stalled
+        'stuck_days' => 7,
+
+        // and neither is worth telling them twice a day
+        'dedupe_hours' => 24,
+
+        /*
+         | How many the bell drops down. Ten is about one screen; the rest are
+         | on the Alerts page, which is what the "See all" link is for.
+         */
+        'bell_limit' => 10,
+
+        /*
+         | In-app only. There is deliberately no mail channel here and no
+         | notification class behind these: this application runs on
+         | MAIL_MAILER=log, where a queued mail writes a line to a file and
+         | nothing arrives — which looks exactly like a broken feature and is
+         | worse than not offering it.
+         */
     ],
 ];

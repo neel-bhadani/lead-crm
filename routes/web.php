@@ -1,9 +1,15 @@
 <?php
 
+use App\Http\Controllers\AlertController;
+use App\Http\Controllers\AutomationController;
+use App\Http\Controllers\AutomationRuleController;
 use App\Http\Controllers\ChannelPartnerController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\IntegrationController;
 use App\Http\Controllers\LeadController;
+use App\Http\Controllers\MessageQueueController;
+use App\Http\Controllers\MessageTemplateController;
+use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\TodoController;
 use App\Http\Controllers\UserController;
@@ -96,6 +102,39 @@ Route::middleware(['auth'])->group(function () {
         Route::delete('/users/{user}', [UserController::class, 'destroy'])->name('users.destroy');
     });
 
+    /* ---------------- projects (admin only) ---------------- */
+
+    /*
+     | Admin only, on the group so a route added here later cannot be forgotten.
+     |
+     | This is a real boundary rather than a tidy sidebar. Projects are the one
+     | piece of reference data every lead in the database points at, the detail
+     | page reports the whole pipeline for a development, and the delete route
+     | touches a foreign key that cascades onto leads. A telecaller who types
+     | /projects gets a 403 from the middleware; ProjectRequest::authorize()
+     | says the same thing again, which is the lock that survives somebody
+     | reorganising this file.
+     |
+     | Unlike channel partners there is no "quick add" outside the group. A
+     | project is set up deliberately, before anybody files a lead against it —
+     | never in the middle of the Add lead form.
+     */
+    Route::middleware('role:admin')->group(function () {
+        Route::get('/projects', [ProjectController::class, 'index'])->name('projects.index');
+        Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
+        Route::post('/projects', [ProjectController::class, 'store'])->name('projects.store');
+        Route::put('/projects/{project}', [ProjectController::class, 'update'])->name('projects.update');
+        /*
+         | Soft delete, and refused outright while the project has any leads —
+         | see ProjectController::destroy(). `leads.project_id` cascades on
+         | delete, so this route is the one place in the application that could
+         | destroy thousands of rows by accident, and it is the one place that
+         | will not.
+         */
+        Route::delete('/projects/{project}', [ProjectController::class, 'destroy'])
+            ->name('projects.destroy');
+    });
+
     /* ---------------- channel partners ---------------- */
 
     /*
@@ -165,6 +204,100 @@ Route::middleware(['auth'])->group(function () {
             ->name('channel-partners.merge');
         Route::delete('/channel-partners/{partner}', [ChannelPartnerController::class, 'destroy'])
             ->name('channel-partners.destroy');
+    });
+
+    /* ---------------- alerts ---------------- */
+
+    /*
+     | Not admin-only, and it must not become admin-only. A telecaller is told
+     | when their own follow-up is three days overdue, and the bell in the
+     | header carries their unread count on every page — a page they could not
+     | open would be a count pointing at a 403.
+     |
+     | There is no privacy boundary to draw here: an alert names its recipient
+     | in `user_id` and Alert::for() matches on it. Whether somebody should ever
+     | have been told about a lead was decided before the row was written, in
+     | AlertService::raise(), which is the only place that can decide it — an
+     | alert's title carries the lead's name, so hiding the row afterwards would
+     | already be too late.
+     */
+    Route::get('/alerts', [AlertController::class, 'index'])->name('alerts.index');
+    Route::post('/alerts/read-all', [AlertController::class, 'readAll'])->name('alerts.read-all');
+    /*
+     | POST, not a link with a query string. Clicking an alert both opens the
+     | lead and stops the alert counting, and doing that in one request is what
+     | stops the two disagreeing. Reading it writes `read_at` on the alert row
+     | and touches nothing else — not the lead, not its stage, not its
+     | follow-up.
+     */
+    Route::post('/alerts/{alert}/read', [AlertController::class, 'read'])->name('alerts.read');
+
+    /* ---------------- automation (admin only) ---------------- */
+
+    /*
+     | Admin only, on the group so a route added here later cannot be forgotten.
+     | This is a real boundary and not a tidy sidebar: what is behind it writes
+     | rules that reassign leads, move stages and message customers, and it
+     | holds the WhatsApp access token.
+     |
+     | A non-admin typing /automation gets a 403 from the middleware, not a
+     | hidden link and an empty page. AutomationRuleRequest and
+     | MessageTemplateRequest re-check `isAdmin()` on top, which is the lock
+     | that survives somebody reorganising this file.
+     */
+    Route::middleware('role:admin')->group(function () {
+
+        Route::get('/automation', [AutomationController::class, 'index'])->name('automation.index');
+        Route::get('/automation/guide', [AutomationController::class, 'guide'])->name('automation.guide');
+
+        /*
+         | The Test button. A POST because it carries a rule that may not exist
+         | yet — the whole value is seeing the blast radius while you are still
+         | choosing the conditions — and read-only despite the verb: nothing on
+         | this path reaches RuleEngine, ActionRunner or LeadFollowUpService.
+         |
+         | Above the {rule} routes so "match" can never be read as a rule id.
+         */
+        Route::post('/automation/rules/match', [AutomationRuleController::class, 'matches'])
+            ->name('automation.rules.match');
+
+        Route::post('/automation/rules', [AutomationRuleController::class, 'store'])
+            ->name('automation.rules.store');
+        Route::put('/automation/rules/{rule}', [AutomationRuleController::class, 'update'])
+            ->name('automation.rules.update');
+        /*
+         | Switching a rule on is its own request, separate from saving it, so
+         | that a new rule is always written in the off position and the
+         | confirmation can show the match count first.
+         */
+        Route::post('/automation/rules/{rule}/toggle', [AutomationRuleController::class, 'toggle'])
+            ->name('automation.rules.toggle');
+        Route::delete('/automation/rules/{rule}', [AutomationRuleController::class, 'destroy'])
+            ->name('automation.rules.destroy');
+
+        Route::post('/automation/templates', [MessageTemplateController::class, 'store'])
+            ->name('automation.templates.store');
+        Route::put('/automation/templates/{template}', [MessageTemplateController::class, 'update'])
+            ->name('automation.templates.update');
+        Route::post('/automation/templates/{template}/toggle', [MessageTemplateController::class, 'toggle'])
+            ->name('automation.templates.toggle');
+        Route::delete('/automation/templates/{template}', [MessageTemplateController::class, 'destroy'])
+            ->name('automation.templates.destroy');
+
+        /*
+         | The queue. `open` answers JSON with the wa.me link because the
+         | browser has to open it in a new tab, which an Inertia redirect
+         | cannot do; the other two are ordinary form posts.
+         */
+        Route::post('/automation/messages/{message}/open', [MessageQueueController::class, 'open'])
+            ->name('automation.messages.open');
+        Route::post('/automation/messages/{message}/send', [MessageQueueController::class, 'send'])
+            ->name('automation.messages.send');
+        Route::post('/automation/messages/{message}/cancel', [MessageQueueController::class, 'cancel'])
+            ->name('automation.messages.cancel');
+
+        Route::put('/automation/whatsapp', [AutomationController::class, 'updateWhatsApp'])
+            ->name('automation.whatsapp.update');
     });
 
     /* ---------------- integrations (admin only) ---------------- */

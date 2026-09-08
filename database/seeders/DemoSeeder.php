@@ -198,5 +198,16 @@ class DemoSeeder extends Seeder
                 ]);
             }
         }
+
+        /*
+         | Last, and after the leads exist.
+         |
+         | The starter rules are all shipped switched off, so ordering is not
+         | strictly load-bearing — nothing above would have fired them. It is
+         | this way round because the Test button is the first thing anybody
+         | presses on a seeded rule, and a rule seeded into an empty database
+         | answers "0 leads match", which reads as broken rather than as empty.
+         */
+        $this->call(AutomationSeeder::class);
     }
 }
