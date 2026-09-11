@@ -62,6 +62,21 @@ const nav = computed(() => [
           href: route('channel-partners.index'),
           active: route().current('channel-partners.*'),
         },
+        /*
+         | Stages & Sources sits with Projects and Channel Partners because it
+         | is the same kind of thing — reference data every lead points at, not
+         | staff administration. Last of the three, because it is the one that
+         | is set up once and rarely opened again.
+         |
+         | Admin-only here and admin-only for real: `role:admin` on the route
+         | group is what refuses a telecaller who types /pipeline, and they get
+         | a 403 rather than an empty page.
+         */
+        {
+          name: 'Stages & Sources',
+          href: route('pipeline.index'),
+          active: route().current('pipeline.*'),
+        },
         { name: 'Users', href: route('users.index'), active: route().current('users.*') },
         /*
          | Integrations is last because it is the one nobody opens twice: it is
@@ -303,7 +318,13 @@ onUnmounted(() => window.removeEventListener('scroll', onScroll))
         <div class="border-t border-white/10 pt-4">
           <div class="text-sm font-semibold">{{ user.name }}</div>
           <div class="text-xs capitalize text-slate-400">{{ user.role }}</div>
-          <button class="mt-2 text-xs text-slate-400 hover:text-white" @click="logout">Sign out</button>
+          <!-- every role has a profile; it lives with the name it edits -->
+          <div class="mt-2 flex items-center gap-3 text-xs">
+            <Link :href="route('account.edit')"
+                  :class="route().current('account.*') ? 'text-white' : 'text-slate-400 hover:text-white'"
+                  @click="open = false">My profile</Link>
+            <button class="text-slate-400 hover:text-white" @click="logout">Sign out</button>
+          </div>
         </div>
       </div>
     </aside>

@@ -111,6 +111,22 @@ class AlertService
         return $written;
     }
 
+    /**
+     * Mark every unread alert of one type as read, for everybody it went to.
+     *
+     * For the alerts that are a question with one answer. "Priya is waiting
+     * for approval" goes to every admin; once one of them approves her, the
+     * others' bells would go on counting a request that no longer exists and
+     * lead them to a Pending filter with nobody in it. Marked read rather than
+     * deleted, so the Alerts page still shows it was raised.
+     *
+     * @return int  how many were marked
+     */
+    public function resolve(string $type): int
+    {
+        return Alert::where('type', $type)->unread()->update(['read_at' => now()]);
+    }
+
     /* ---------------- recipients ---------------- */
 
     /** Every active admin. */

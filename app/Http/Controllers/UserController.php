@@ -6,6 +6,7 @@ use App\Http\Controllers\Concerns\ResolvesFilters;
 use App\Http\Requests\DeleteUserRequest;
 use App\Http\Requests\UserRequest;
 use App\Models\User;
+use App\Services\AlertService;
 use App\Services\UserHandoverService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -46,18 +47,25 @@ class UserController extends Controller
                 });
             })
             ->when($filters['role'] ?? null, fn ($q, $v) => $q->where('role', $v))
-            ->when(
-                // 'all' is absence; the two real values are strings because
-                // that is what a <select> sends
-                isset($filters['status']),
-                fn ($q) => $q->where('is_active', $filters['status'] === 'active')
-            )
+            /*
+             | Four statuses, and every row is in exactly one. 'all' is
+             | absence. Inactive means switched off after being approved —
+             | somebody who used to work here — and not a sign-up nobody has
+             | looked at yet, which is Pending and asks for a different action.
+             */
+            ->when($filters['status'] ?? null, fn ($q, $status) => match ($status) {
+                'active'   => $q->where('is_active', true),
+                'inactive' => $q->where('is_active', false)->approved(),
+                'pending', 'rejected' => $q->where('approval_status', $status),
+            })
             ->withCount([
                 'leads as open_leads_count' => fn ($q) => $q->open(),
                 'todos as pending_todos_count' => fn ($q) => $q->where('status', 'pending'),
                 // only used to warn before a demotion — see the modal
                 'leads as advanced_leads_count' => fn ($q) => $q->whereIn('stage', config('crm.advanced_stages')),
             ])
+            // somebody waiting on an answer goes above everybody who is not
+            ->orderByRaw("CASE approval_status WHEN 'pending' THEN 0 ELSE 1 END")
             ->orderByRaw("CASE role WHEN 'admin' THEN 0 WHEN 'salesperson' THEN 1 ELSE 2 END")
             ->orderBy('first_name')
             ->paginate(15)
@@ -70,6 +78,9 @@ class UserController extends Controller
                 'mobile_number' => $u->mobile_number,
                 'role'          => $u->role,
                 'is_active'     => $u->is_active,
+                'approval_status' => $u->approval_status,
+                // when a pending request came in; the badge says how long it has waited
+                'signed_up_on'  => $u->created_at?->format('j M Y'),
                 'open_leads_count'     => $u->open_leads_count,
                 'pending_todos_count'  => $u->pending_todos_count,
                 'advanced_leads_count' => $u->advanced_leads_count,
@@ -110,6 +121,8 @@ class UserController extends Controller
                 // the two guards the UI greys out before the server repeats them
                 'currentUserId'    => $request->user()->id,
                 'activeAdminCount' => User::active()->where('role', 'admin')->count(),
+                // the banner above the table, whatever the filters are hiding
+                'pendingCount'     => User::where('approval_status', 'pending')->count(),
             ],
         ]);
     }
@@ -123,7 +136,7 @@ class UserController extends Controller
             [
                 'search' => ['sometimes', 'string', 'max:100'],
                 'role'   => ['sometimes', 'string', Rule::in(array_keys(config('crm.role_labels')))],
-                'status' => ['sometimes', 'string', 'in:active,inactive'],
+                'status' => ['sometimes', 'string', 'in:active,inactive,pending,rejected'],
             ],
         );
     }
@@ -167,6 +180,60 @@ class UserController extends Controller
         $notice = $result ? $this->handover->summarise($result, $request->handoverTarget()) : null;
 
         return $notice ? $response->with('warning', $notice) : $response;
+    }
+
+    /**
+     * Let a sign-up in.
+     *
+     * Switched on, approved, and on their role's defaults: `permissions` is
+     * null, which is "whatever a telecaller does" rather than a snapshot of it.
+     * Anything more is a separate, deliberate edit on this page afterwards.
+     *
+     * A rejected request can be approved later — an admin who turned somebody
+     * down by mistake should not have to delete the row and ask them to sign
+     * up again. An account that is already approved cannot be "approved"
+     * again: switching a working account back on is the Edit modal's job.
+     */
+    public function approve(User $user, AlertService $alerts)
+    {
+        if ($user->approval_status === 'approved') {
+            return back()->with('error', "{$user->display_name} is already approved.");
+        }
+
+        $user->forceFill([
+            'approval_status' => 'approved',
+            'is_active'       => true,
+            'permissions'     => null,
+        ])->save();
+
+        $alerts->resolve($user->approvalAlertType());
+
+        return back()->with('success', "{$user->display_name} is approved and can sign in now.");
+    }
+
+    /**
+     * Turn a sign-up down. The row stays, switched off, so the next attempt to
+     * sign in says "not approved" instead of "wrong password", and so the same
+     * address cannot quietly apply again the next morning.
+     *
+     * Pending only. An approved account that should stop working is
+     * deactivated from the Edit modal, which hands their work over first;
+     * "rejecting" it here would skip that.
+     */
+    public function reject(User $user, AlertService $alerts)
+    {
+        if ($user->approval_status !== 'pending') {
+            return back()->with('error', 'Only a request that is still waiting can be rejected.');
+        }
+
+        $user->forceFill([
+            'approval_status' => 'rejected',
+            'is_active'       => false,
+        ])->save();
+
+        $alerts->resolve($user->approvalAlertType());
+
+        return back()->with('success', "{$user->display_name}'s request was rejected.");
     }
 
     /**

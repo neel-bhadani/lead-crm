@@ -10,6 +10,7 @@ use App\Services\AlertService;
 use App\Services\Automation\ConditionMatcher;
 use App\Services\Automation\RuleEngine;
 use Illuminate\Console\Command;
+use App\Support\CrmTaxonomy;
 
 /**
  * The hourly half of automation.
@@ -185,7 +186,7 @@ class RunAutomation extends Command
                         continue;
                     }
 
-                    $stage = config("crm.stages.{$lead->stage}", $lead->stage);
+                    $stage = CrmTaxonomy::stageLabel($lead->stage);
                     $held  = $lead->days_in_stage ?? $days;
 
                     $count += $alerts->raise(

@@ -9,6 +9,7 @@ import InlinePartnerForm from './InlinePartnerForm.vue'
 import { toast } from '@/composables/useToast'
 import { useFutureDateTime } from '@/composables/useFutureDateTime'
 import { useFollowUpConflict } from '@/composables/useFollowUpConflict'
+import { pickable } from '@/composables/useTaxonomy'
 
 const props = defineProps({
   show: Boolean,
@@ -47,6 +48,26 @@ const duplicate = ref(null)
 // LeadRequest sends back, so a bypassed `min` reads the same either way
 const { min: minAt, refresh: refreshMinAt, past: datePast, error: dateError } =
   useFutureDateTime(() => form.follow_up_at, 'The next follow-up must be in the future.')
+
+/*
+ | The two vocabulary dropdowns: what is still in use, plus whatever this lead
+ | already holds. Opening a lead whose stage or source was retired after it was
+ | filed must show that value and must save — LeadRequest allows exactly the
+ | same set, and dropping the option would leave the field blank and move the
+ | lead somewhere nobody chose on the first save.
+ */
+const stageOptions  = computed(() => pickable(props.options.stages, props.options.activeStages, props.lead?.stage))
+const sourceOptions = computed(() => pickable(props.options.sources, props.options.activeSources, props.lead?.source))
+
+/*
+ | What a NEW lead starts on. Walk-in and Fresh while those are still in use —
+ | they are the overwhelmingly common answer and were the hardcoded defaults —
+ | and otherwise the first option the dropdown is actually offering. A default
+ | naming a stage the admin has retired would render as a blank select that
+ | fails validation on submit.
+ */
+const firstOffered = (options, preferred) =>
+  options.some(o => o.key === preferred) ? preferred : (options[0]?.key ?? '')
 
 /* conditional fields */
 const showBroker = computed(() => form.source === 'broker')
@@ -226,6 +247,8 @@ watch(() => props.show, v => {
   } else {
     Object.assign(form, blank)
     form.project_id = props.options.projects[0]?.id ?? ''
+    form.source = firstOffered(sourceOptions.value, 'walk_in')
+    form.stage  = firstOffered(stageOptions.value, 'fresh')
   }
 })
 
@@ -323,7 +346,7 @@ const submit = () => {
       </FormField>
       <FormField label="Source" required :error="form.errors.source">
         <select v-model="form.source">
-          <option v-for="(label, key) in options.sources" :key="key" :value="key">{{ label }}</option>
+          <option v-for="o in sourceOptions" :key="o.key" :value="o.key">{{ o.label }}</option>
         </select>
       </FormField>
     </div>
@@ -386,7 +409,7 @@ const submit = () => {
 
     <FormField class="mt-4" label="Stage" required :error="form.errors.stage">
       <select v-model="form.stage">
-        <option v-for="(label, key) in options.stages" :key="key" :value="key">{{ label }}</option>
+        <option v-for="o in stageOptions" :key="o.key" :value="o.key">{{ o.label }}</option>
       </select>
     </FormField>
 

@@ -3,12 +3,14 @@
 namespace App\Http\Requests;
 
 use App\Http\Requests\Concerns\SchedulesFollowUp;
+use App\Http\Requests\Concerns\ValidatesTaxonomy;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 class CompleteTodoRequest extends FormRequest
 {
     use SchedulesFollowUp;
+    use ValidatesTaxonomy;
 
     public function authorize(): bool
     {
@@ -28,7 +30,12 @@ class CompleteTodoRequest extends FormRequest
              | booked and belongs to a call nobody has made yet.
              */
             'remarks'      => ['required', 'string', 'max:1000'],
-            'stage'        => ['required', Rule::in(array_keys(config('crm.stages')))],
+            /*
+             | Active stages, plus the one the lead is standing in — a call
+             | logged against a lead in a stage that has since been retired must
+             | still be closeable, including by leaving the stage where it is.
+             */
+            'stage'        => ['required', $this->activeStageRule($this->route('todo')?->lead?->stage)],
 
             'reason'       => [
                 'nullable',

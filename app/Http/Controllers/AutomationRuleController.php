@@ -8,6 +8,7 @@ use App\Models\Lead;
 use App\Services\Automation\ConditionMatcher;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule as ValidationRule;
+use App\Support\CrmTaxonomy;
 
 /**
  * Writing, testing and switching on rules. Admin only, on the route group.
@@ -154,8 +155,8 @@ class AutomationRuleController extends Controller
             ->map(fn (Lead $lead) => [
                 'id'      => $lead->id,
                 'name'    => $lead->full_name,
-                'stage'   => config("crm.stages.{$lead->stage}", $lead->stage),
-                'source'  => config("crm.sources.{$lead->source}", $lead->source),
+                'stage'   => CrmTaxonomy::stageLabel($lead->stage),
+                'source'  => CrmTaxonomy::sourceLabel($lead->source),
                 'project' => $lead->project?->name,
                 'owner'   => $lead->owner?->display_name,
                 'days_in_stage' => $lead->days_in_stage,

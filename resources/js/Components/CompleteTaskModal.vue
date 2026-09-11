@@ -7,9 +7,21 @@ import StageBadge from './StageBadge.vue'
 import CallButtons from './CallButtons.vue'
 import { useFutureDateTime } from '@/composables/useFutureDateTime'
 import { useFollowUpConflict } from '@/composables/useFollowUpConflict'
+import { pickable } from '@/composables/useTaxonomy'
 
 const props = defineProps({ show: Boolean, todo: Object, options: Object })
+
 const emit = defineEmits(['close'])
+
+/*
+ | The stages this call may be closed at: the ones still in use, plus the one
+ | the lead is already standing in. That second half matters here more than
+ | anywhere — a lead in a retired stage still gets called, and the person
+ | logging the call must be able to leave it where it is. CompleteTodoRequest
+ | allows exactly the same set.
+ */
+const stageOptions = computed(() =>
+  pickable(props.options.stages, props.options.activeStages, props.todo?.lead?.stage))
 
 const form = useForm({
   remarks: '', stage: 'connected',
@@ -128,7 +140,7 @@ const submit = () => form.post(route('todos.complete', props.todo.id), {
 
     <FormField class="mt-4" label="New stage" required :error="form.errors.stage">
       <select v-model="form.stage">
-        <option v-for="(l, k) in options.stages" :key="k" :value="k">{{ l }}</option>
+        <option v-for="o in stageOptions" :key="o.key" :value="o.key">{{ o.label }}</option>
       </select>
     </FormField>
 

@@ -5,6 +5,7 @@ namespace App\Services\Automation;
 use App\Models\MessageTemplate;
 use App\Models\Project;
 use App\Models\User;
+use App\Support\CrmTaxonomy;
 
 /**
  * The rule vocabulary, resolved.
@@ -54,8 +55,18 @@ class RuleCatalog
     public function options(): array
     {
         return [
-            'stages'     => $this->fromMap(config('crm.stages')),
-            'sources'    => $this->fromMap(config('crm.sources')),
+            /*
+             | ACTIVE stages and sources, plus any retired one an existing rule
+             | already names — marked as retired rather than silently dropped.
+             |
+             | Dropping it is what would break a rule quietly: the builder's
+             | select would find no option matching the saved value, fall back
+             | to its placeholder, and the next person to press Save on that
+             | rule would blank a condition they never touched. An option
+             | reading "In discussion (no longer in use)" tells them instead.
+             */
+            'stages'     => $this->fromMap(CrmTaxonomy::stages(), CrmTaxonomy::allStages()),
+            'sources'    => $this->fromMap(CrmTaxonomy::sources(), CrmTaxonomy::allSources()),
             'todo_types' => $this->fromMap(config('crm.todo_types')),
 
             /*
@@ -139,11 +150,25 @@ class RuleCatalog
     }
 
     /** @param array<string, string> $map */
-    private function fromMap(?array $map): array
+    private function fromMap(?array $map, ?array $withRetired = null): array
     {
-        return collect($map ?? [])
+        $options = collect($map ?? [])
             ->map(fn (string $label, string $key) => ['value' => $key, 'label' => $label])
             ->values()
             ->all();
+
+        /*
+         | The retired half of a vocabulary that has one: every key in
+         | `$withRetired` that `$map` no longer offers, appended in its own
+         | order and labelled as retired. See the call site for why an existing
+         | rule's saved value has to stay selectable.
+         */
+        foreach ($withRetired ?? [] as $key => $label) {
+            if (! array_key_exists($key, $map ?? [])) {
+                $options[] = ['value' => $key, 'label' => $label . ' (no longer in use)'];
+            }
+        }
+
+        return $options;
     }
 }

@@ -11,6 +11,7 @@ use Illuminate\Session\Store;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use App\Support\CrmTaxonomy;
 
 /**
  * Proves every dashboard figure against a query written independently of the
@@ -30,7 +31,10 @@ class VerifyDashboard extends Command
     protected $signature = 'crm:verify-dashboard
                             {--user= : audit as this user id (default: the first admin)}
                             {--from= : custom range start, Y-m-d}
-                            {--to=   : custom range end, Y-m-d}';
+                            {--to=   : custom range end, Y-m-d}
+                            {--stage=   : also verify the page cross-filtered to this lead stage}
+                            {--source=  : ...and/or to this source}
+                            {--reached= : ...and/or to leads that have reached this stage}';
 
     protected $description = 'Check every dashboard card and chart against an independent query, for every range';
 
@@ -42,6 +46,19 @@ class VerifyDashboard extends Command
     /** The snapshot as each range saw it — it must be the same every time. */
     private array $pipelineByRange = [];
 
+    /**
+     * The cross-filter every comparison in this run is made under, or an empty
+     * array for the plain page.
+     *
+     * It goes into the request the dashboard is rendered from AND into the
+     * hand-written SQL on the other side, as the same three clauses written
+     * twice in two languages. That is the point of the exercise: a filter that
+     * reached one query and not another shows up here as a disagreement.
+     *
+     * @var array<string, string>
+     */
+    private array $cross = [];
+
     public function handle(): int
     {
         $user = $this->option('user')
@@ -51,9 +68,19 @@ class VerifyDashboard extends Command
         $to   = $this->option('to')   ?: Carbon::today()->toDateString();
         $from = $this->option('from') ?: Carbon::today()->subDays(13)->toDateString();
 
+        foreach (['stage', 'source', 'reached'] as $key) {
+            if ($this->option($key)) {
+                $this->cross[$key] = (string) $this->option($key);
+            }
+        }
+
         $this->newLine();
         $this->info("Verifying as {$user->display_name} ({$user->role})  —  "
             . now()->toDateTimeString() . ' ' . config('app.timezone'));
+
+        $this->line($this->cross
+            ? '<fg=yellow>Cross-filtered:</> ' . json_encode($this->cross)
+            : 'No cross-filter — the plain dashboard.');
         $this->newLine();
 
         $ranges = [
@@ -118,7 +145,7 @@ class VerifyDashboard extends Command
 
     private function dashboard(User $user, array $query): array
     {
-        $request = Request::create('/dashboard', 'GET', $query + ['reset' => 1]);
+        $request = Request::create('/dashboard', 'GET', $query + $this->cross + ['reset' => 1]);
         $request->headers->set('X-Inertia', 'true');
         $request->setLaravelSession(new Store('verify', new ArraySessionHandler(120)));
 
@@ -168,7 +195,12 @@ class VerifyDashboard extends Command
      */
     private function leadScope(User $u, string $alias = 'l'): string
     {
-        return $u->role === 'admin' ? '' : " AND $alias.assigned_to = " . (int) $u->id;
+        $visibility = $u->role === 'admin' ? '' : " AND $alias.assigned_to = " . (int) $u->id;
+
+        // visibility and the cross-filter both narrow the lead population, and
+        // every query below already asks for this string, so the filter rides
+        // in with it rather than being remembered at fourteen call sites
+        return $visibility . $this->crossScope($alias);
     }
 
     private function todoScope(User $u, string $alias = 't'): string
@@ -179,6 +211,49 @@ class VerifyDashboard extends Command
     private function count(string $sql): int
     {
         return (int) DB::selectOne($sql)->n;
+    }
+
+    /**
+     * The cross-filter, as SQL, against a `leads` alias.
+     *
+     * Written out here rather than shared with the controller, for the same
+     * reason every other clause in this file is: the two sides of the
+     * comparison have to be able to disagree. `stage` and `source` are columns;
+     * `reached` is an EXISTS over the completed history, which is the same
+     * question the funnel's own counts are grouped out of, asked differently.
+     *
+     * The values are config keys the controller has already validated against
+     * config, and they arrive here from a command-line option — so they are
+     * quoted through the PDO quoter rather than interpolated raw, and a stage
+     * that is not a configured one is refused before it reaches a string.
+     */
+    private function crossScope(string $alias = 'l'): string
+    {
+        $sql = '';
+
+        $allowed = fn (string $value, array $keys) => in_array($value, $keys, true)
+            ? DB::connection()->getPdo()->quote($value)
+            : throw new \InvalidArgumentException("Not a configured value: $value");
+
+        $stages  = CrmTaxonomy::stageKeys();
+        $sources = CrmTaxonomy::sourceKeys();
+
+        if (isset($this->cross['stage'])) {
+            $sql .= " AND $alias.stage = " . $allowed($this->cross['stage'], $stages);
+        }
+
+        if (isset($this->cross['source'])) {
+            $sql .= " AND $alias.source = " . $allowed($this->cross['source'], $sources);
+        }
+
+        if (isset($this->cross['reached'])) {
+            $sql .= " AND EXISTS (SELECT 1 FROM todos tx
+                                   WHERE tx.lead_id = $alias.id
+                                     AND tx.outcome_stage = " . $allowed($this->cross['reached'], $stages) . "
+                                     AND tx.completed_at IS NOT NULL)";
+        }
+
+        return $sql;
     }
 
     /** All six cards plus the conversion percentage. */
@@ -225,7 +300,8 @@ class VerifyDashboard extends Command
                                    FROM todos t JOIN leads l ON l.id = t.lead_id
                                   WHERE l.deleted_at IS NULL
                                     AND t.status = 'pending'
-                                    AND t.scheduled_at <= '$eod' $ts");
+                                    AND t.scheduled_at <= '$eod' $ts"
+                                    . $this->crossScope());
 
         // Conversion — one cohort, one question: of the leads created in this
         // range, how many have booked since. Numerator inside the denominator.
@@ -267,7 +343,7 @@ class VerifyDashboard extends Command
 
         $out = [];
 
-        foreach (array_keys(config('crm.stages')) as $stage) {
+        foreach (CrmTaxonomy::stageKeys() as $stage) {
             $out[$stage] = $this->count(
                 "SELECT COUNT(DISTINCT t.lead_id) n
                    FROM todos t JOIN leads l ON l.id = t.lead_id
@@ -309,7 +385,7 @@ class VerifyDashboard extends Command
         }
 
         $out = [];
-        foreach (array_keys(config('crm.stages')) as $k) {
+        foreach (CrmTaxonomy::stageKeys() as $k) {
             $out[$k] = $map[$k] ?? 0;      // zero-filled: a missing bar reads as a bug
         }
 
@@ -363,7 +439,7 @@ class VerifyDashboard extends Command
         $dAllStages    = $reshape($charts['stagesAllTime']['bars']);
         $dPeriodStages = $reshape($charts['stagesInPeriod']['bars']);
 
-        $sourceKey = array_flip(config('crm.sources'));
+        $sourceKey = array_flip(CrmTaxonomy::allSources());
         $dSource   = [];
         foreach ($charts['bySource'] as $slice) {
             $dSource[$sourceKey[$slice['label']]] = $slice['value'];
@@ -427,6 +503,79 @@ class VerifyDashboard extends Command
             $cards['visits'], $iChanges['site_visit_done']);
         $check('Card    Lost = lost events',
             $cards['lost'], $iChanges['lost']);
+
+        /*
+         | The funnel. Six bands, and each is checked against the same
+         | one-query-per-stage count the event cards are checked against, so
+         | the funnel is proved out of `todos.outcome_stage` rather than
+         | proved to agree with a controller method that might be wrong in the
+         | same way it is.
+         */
+        $funnelStages = ['fresh', 'connected', 'details_shared',
+                         'site_visit_done', 'in_discussion', 'booking_done'];
+
+        $dFunnel = [];
+        foreach ($charts['funnel']['bands'] as $band) {
+            $dFunnel[$band['key']] = $band['value'];
+        }
+
+        $check('Funnel  bands and their order',
+            array_keys($dFunnel), $funnelStages);
+
+        $check('Funnel  band counts',
+            $dFunnel, array_intersect_key($iChanges, array_flip($funnelStages)));
+
+        /*
+         | And the tie that is the whole reason the funnel reads out of that
+         | column: two of its six bands ARE two of the cards above it. These
+         | cannot drift, because they are one figure printed twice — which is
+         | exactly the kind of claim worth checking on real data.
+         */
+        $check('Funnel  Site visit done band = Site visits card',
+            $dFunnel['site_visit_done'], $cards['visits']);
+        $check('Funnel  Booking done band = Bookings card',
+            $dFunnel['booking_done'], $cards['booked']);
+
+        /*
+         | The drop-off, guarded. A band whose predecessor is empty has nothing
+         | to divide by and must report null — an em dash on the page — rather
+         | than 0%, which would read as "nobody was lost here".
+         */
+        $guarded = true;
+        $above   = null;
+        foreach ($charts['funnel']['bands'] as $band) {
+            if ($above === null || $above === 0) {
+                $guarded = $guarded && $band['drop'] === null;
+            } else {
+                $guarded = $guarded && $band['drop'] !== null;
+            }
+
+            $above = $band['value'];
+        }
+
+        $check('Funnel  drop-off is guarded against an empty band', $guarded, true);
+
+        /*
+         | The sparklines. Nothing is read off one, so what is checked is the
+         | only thing that can be wrong invisibly: that every bucket in the
+         | range has a value. A short series is a line that stops early; a
+         | series with a hole in it is a line with a gap.
+         */
+        $spark   = $cards['spark'];
+        $buckets = $spark['buckets'];
+
+        $filled = true;
+        foreach (['total', 'today', 'visits', 'booked', 'lost', 'pending'] as $series) {
+            $filled = $filled
+                && count($spark[$series]) === $buckets
+                && count(array_filter($spark[$series], 'is_int')) === $buckets;
+        }
+
+        $check('Spark   six series, every bucket filled', $filled, true);
+        $check('Spark   buckets match the range',
+            $buckets,
+            (int) ceil(($from->copy()->startOfDay()->diffInDays($to->copy()->startOfDay()) + 1)
+                / ($spark['weekly'] ? 7 : 1)));
 
         /*
          | Chart 1 has no window, so its bars must account for every lead this

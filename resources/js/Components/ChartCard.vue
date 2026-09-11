@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import Chart from 'chart.js/auto'
+import TileHeader from './TileHeader.vue'
 
 /*
  | Every card looks the same, and there is deliberately no prop that can change
@@ -13,6 +14,12 @@ import Chart from 'chart.js/auto'
  | up reading as a different kind of panel and the grid looked broken. The
  | styling lives here now and takes no arguments, so the cards cannot drift
  | apart again.
+ |
+ | The header itself is TileHeader, shared with the KPI tiles and the two
+ | follow-up panels. It used to be markup of this card's own, which is how the
+ | chart row and the panel row came to start their content at different
+ | heights — one header for every tile on the page is what stops that coming
+ | back.
  |
  | `note` defaults to a string rather than undefined so that a card with no
  | note still renders the same elements and the same attributes as one with a
@@ -27,6 +34,13 @@ const props = defineProps({
   // every slice at zero draws nothing, where a bar chart still shows a scale
   empty: { type: Boolean, default: false },
   emptyText: { type: String, default: 'No data in this range' },
+  /*
+   | Whether a click on the plot does anything — a cursor and a hover lift,
+   | nothing more. What a click MEANS is the config's `onClick`, which belongs
+   | to the page that built the chart; this card has never known what it is
+   | drawing and is not about to start.
+   */
+  clickable: { type: Boolean, default: false },
 })
 
 const canvas = ref(null)
@@ -107,37 +121,17 @@ onBeforeUnmount(() => {
     that was no longer shrinking — appeared frozen until a reload. min-w-0 drops
     that floor so the column can shrink, and Chart.js follows it down.
   -->
-  <div class="card min-w-0">
-    <!--
-      Title over note, and a header whose height is a constant rather than a
-      function of its text.
+  <div class="tile" :class="clickable ? 'tile-lift' : ''">
+    <TileHeader :title="title" :note="note" />
 
-      min-h reserves the two note lines the longest note could ever need, and
-      line-clamp-2 stops it needing a third, so the header is 84px whether the
-      note is two lines, one line, or absent. That is the property the row
-      alignment depends on: a header that grows with its note pushes the plot
-      box below it down and throws the pair out of step.
-
-      justify-center is what keeps the reserved space from reading as a gap. A
-      one-line note is centred in the box, so the header looks like it has
-      generous padding rather than an empty row waiting underneath it.
-
-      Not one class here is bound. Cards rendering a header each of their own
-      is what this file is fixing, so there is nothing left to render
-      differently with.
-    -->
-    <div class="flex min-h-[5.25rem] flex-col justify-center border-b border-slate-100 px-5 py-3.5">
-      <h3 class="truncate text-sm font-semibold" :title="title">{{ title }}</h3>
-      <p class="mt-0.5 line-clamp-2 text-xs text-slate-400" :title="note">{{ note }}</p>
-    </div>
-    <div class="px-5 py-4">
+    <div class="flex-1 px-4 py-3">
       <!--
         overflow-hidden covers the frame between the box shrinking and Chart.js
         redrawing the canvas at the new size: without it that one oversized
         frame is enough to flash a horizontal scrollbar across the page.
       -->
       <div ref="box" class="relative overflow-hidden" :class="height">
-        <canvas ref="canvas"></canvas>
+        <canvas ref="canvas" :class="clickable ? 'cursor-pointer' : ''"></canvas>
         <div v-if="empty"
              class="absolute inset-0 flex items-center justify-center text-sm text-slate-400">
           {{ emptyText }}

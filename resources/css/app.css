@@ -16,6 +16,20 @@
         scroll-padding-top: 5.5rem;
     }
 
+    /*
+     | One height, one radius, one padding, one focus ring, for every control
+     | in the application. A page that wants a different WIDTH says so; nothing
+     | is allowed to say a different height, and no page should be reaching for
+     | a `!` utility to get one.
+     |
+     | `--control-h` is the height, in one place, because two things read it:
+     | this rule and the buttons further down. A select at 38px beside a button
+     | at 34px is the sort of thing nobody can name but everybody sees.
+     */
+    :root {
+        --control-h: 38px;
+    }
+
     input[type='text'],
     input[type='email'],
     input[type='tel'],
@@ -23,11 +37,28 @@
     input[type='password'],
     input[type='number'],
     input[type='date'],
+    input[type='time'],
     input[type='datetime-local'],
     select,
     textarea {
         width: 100%;
-        min-height: 38px;
+        /*
+         | min-width: 0 is the whole reason the date and datetime controls used
+         | to burst out of their column.
+         |
+         | A grid item's automatic minimum size is `auto`, which resolves to the
+         | content's intrinsic width — and for `datetime-local` that intrinsic
+         | width is whatever the browser's own segmented editor happens to need,
+         | a number this stylesheet does not know and cannot rely on. It is not
+         | a Tailwind class on one wrapper: it is a floor under EVERY one of
+         | these controls, so it belongs with the rest of what they share.
+         |
+         | max-width pins the other end: nothing here may be wider than the box
+         | it was given, whatever it thinks it needs.
+         */
+        min-width: 0;
+        max-width: 100%;
+        min-height: var(--control-h);
         padding: 0.55rem 0.7rem;
         border: 1px solid #e2e8f0;
         border-radius: 0.5rem;
@@ -39,12 +70,58 @@
 
     select {
         appearance: none;
-        padding-right: 2rem;
         cursor: pointer;
+        /*
+         | The chevron is a background image, so it does not push text aside —
+         | only this padding keeps a long option from sliding underneath it.
+         | The arrow sits 12px from the right edge and is 16px wide, so it ends
+         | 28px in; 36px of padding leaves 8px of clear air at every width the
+         | control is ever given.
+         |
+         | text-overflow only does anything on a <select> in browsers that
+         | implement it (Chromium and Firefox do), and where it does not the
+         | padding above still means the label is clipped in open space rather
+         | than under the arrow. A truncated option is a readable failure; one
+         | printed through a chevron is not.
+         */
+        padding-right: 2.25rem;
+        text-overflow: ellipsis;
         background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
         background-repeat: no-repeat;
-        background-position: right 0.65rem center;
+        background-position: right 0.75rem center;
         background-size: 1rem;
+    }
+
+    /*
+     | The date family, and the one thing that makes them different from every
+     | other input: the editor inside them is the browser's, not ours.
+     |
+     | WebKit and Blink lay `datetime-local` out as a row of segments plus a
+     | calendar button, and that row carries an intrinsic width of its own that
+     | ignores the box it was put in. Letting the inner edit shrink — and
+     | keeping the picker button from being squeezed out of existence beside it
+     | — is what stops the control widening its column instead of fitting it.
+     */
+    input[type='date'],
+    input[type='time'],
+    input[type='datetime-local'] {
+        /* the segmented editor, not the value, decides the intrinsic width */
+        min-width: 0;
+    }
+
+    input[type='date']::-webkit-datetime-edit,
+    input[type='time']::-webkit-datetime-edit,
+    input[type='datetime-local']::-webkit-datetime-edit {
+        min-width: 0;
+        overflow: hidden;
+    }
+
+    input[type='date']::-webkit-calendar-picker-indicator,
+    input[type='time']::-webkit-calendar-picker-indicator,
+    input[type='datetime-local']::-webkit-calendar-picker-indicator {
+        /* it is the one part that must not shrink — it is the tap target */
+        flex: none;
+        cursor: pointer;
     }
 
     textarea {
@@ -63,6 +140,21 @@
     input::placeholder,
     textarea::placeholder {
         color: #94a3b8;
+    }
+
+    /*
+     | Phones and small tablets: 44px, which is the smallest thing a thumb hits
+     | reliably. One custom property, so a control and the button beside it grow
+     | together and the row does not come apart.
+     |
+     | 767.98px rather than 767px, because the breakpoint has to be the exact
+     | complement of Tailwind's `md:` (min-width: 768px) — a viewport reported
+     | as 767.5 on a scaled display would otherwise match neither.
+     */
+    @media (max-width: 767.98px) {
+        :root {
+            --control-h: 44px;
+        }
     }
 }
 
@@ -86,6 +178,36 @@
 
     .card {
         @apply rounded-xl border border-slate-200 bg-white;
+    }
+
+    /*
+     | A dashboard tile.
+     |
+     | `.card` with two things added and one taken away. A column, because
+     | every tile is a fixed header over a body that has to take the rest of
+     | the height the grid row gave it — without that the header sits at the
+     | top of a stretched box and the plot inside floats in the middle of it.
+     | And a lighter border than a card's, because a dense grid draws a lot of
+     | them: at this spacing slate-200 on every edge reads as graph paper, and
+     | the point of the borders is to separate the tiles rather than to be seen.
+     */
+    .tile {
+        @apply flex min-w-0 flex-col rounded-xl border border-slate-200/80 bg-white;
+    }
+
+    /*
+     | The lift, and it is a promise rather than a decoration: a tile that
+     | rises under the cursor is a tile a click does something to. Only the
+     | four cross-filter visuals wear it. The KPI tiles do not — a total is not
+     | a segment and there is nothing for one to filter to — and neither do the
+     | two follow-up panels, whose rows have a hover of their own and whose
+     | buttons are the things that are actually pressed.
+     |
+     | 2px and 150ms. Enough to notice at the edge of vision, not enough to
+     | make a grid of eleven tiles feel like it is breathing.
+     */
+    .tile-lift {
+        @apply transition duration-150 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md;
     }
 
     .info-box {

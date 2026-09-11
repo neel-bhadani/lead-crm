@@ -35,6 +35,7 @@ class UserFactory extends Factory
             'mobile_number'  => (string) fake()->unique()->numberBetween(9000000000, 9999999999),
             'role'           => 'salesperson',
             'is_active'      => true,
+            'approval_status' => 'approved',
             'password'       => static::$password ??= Hash::make('password'),
             'remember_token' => Str::random(10),
         ];
@@ -49,5 +50,16 @@ class UserFactory extends Factory
     public function inactive(): static
     {
         return $this->state(fn (array $attributes) => ['is_active' => false]);
+    }
+
+    /** Fresh from the sign-up page: switched off until an admin approves. */
+    public function pending(): static
+    {
+        return $this->state(fn (array $attributes) => ['is_active' => false, 'approval_status' => 'pending']);
+    }
+
+    public function rejected(): static
+    {
+        return $this->state(fn (array $attributes) => ['is_active' => false, 'approval_status' => 'rejected']);
     }
 }

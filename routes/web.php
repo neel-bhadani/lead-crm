@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AccountController;
 use App\Http\Controllers\AlertController;
 use App\Http\Controllers\AutomationController;
 use App\Http\Controllers\AutomationRuleController;
@@ -9,6 +10,7 @@ use App\Http\Controllers\IntegrationController;
 use App\Http\Controllers\LeadController;
 use App\Http\Controllers\MessageQueueController;
 use App\Http\Controllers\MessageTemplateController;
+use App\Http\Controllers\PipelineController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\TodoController;
@@ -100,6 +102,16 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/users', [UserController::class, 'store'])->name('users.store');
         Route::put('/users/{user}', [UserController::class, 'update'])->name('users.update');
         Route::delete('/users/{user}', [UserController::class, 'destroy'])->name('users.destroy');
+
+        /*
+         | Answering a sign-up. Two POSTs of their own rather than a status
+         | field on the update, because approving is not an edit: it switches
+         | the account on, resets it to its role's defaults and clears the
+         | alert from every admin's bell, and none of that should happen
+         | because somebody ticked a box in the Edit modal.
+         */
+        Route::post('/users/{user}/approve', [UserController::class, 'approve'])->name('users.approve');
+        Route::post('/users/{user}/reject', [UserController::class, 'reject'])->name('users.reject');
     });
 
     /* ---------------- projects (admin only) ---------------- */
@@ -204,6 +216,62 @@ Route::middleware(['auth'])->group(function () {
             ->name('channel-partners.merge');
         Route::delete('/channel-partners/{partner}', [ChannelPartnerController::class, 'destroy'])
             ->name('channel-partners.destroy');
+    });
+
+    /* ---------------- pipeline: stages & sources (admin only) ---------------- */
+
+    /*
+     | The vocabulary every other page in the application speaks: the stages a
+     | lead can stand in and the sources it can come from. These used to be two
+     | arrays in config/crm.php that only a developer could change.
+     |
+     | Admin only, on the group rather than on each route, so a route added here
+     | later cannot be forgotten — and this is the group where that matters
+     | most. Every one of these writes reference data that `leads.stage`,
+     | `leads.source` and `todos.outcome_stage` are matched against by string,
+     | with no foreign key underneath to catch a mistake. A telecaller who types
+     | /pipeline gets a 403 from the middleware; LeadStageRequest::authorize()
+     | and LeadSourceRequest::authorize() say the same thing again, which is the
+     | lock that survives somebody reorganising this file.
+     |
+     | Deliberately not permission-gated. The five toggles in
+     | config('crm.permissions') are about who may touch LEADS; who decides what
+     | a stage is called is not one of them and must not become grantable from
+     | inside the app.
+     |
+     | THE DELETE ROUTES ARE HARD DELETES, and the only ones in the application
+     | that are not soft. They are also the most refused: PipelineController
+     | turns one down unless the row is a word nothing has ever been written in
+     | — no leads, no history, no automation rule. Switching a stage off is the
+     | operation an admin actually wants and it is a PUT, not a DELETE.
+     */
+    Route::middleware('role:admin')->prefix('pipeline')->group(function () {
+        Route::get('/', [PipelineController::class, 'index'])->name('pipeline.index');
+
+        Route::post('/stages', [PipelineController::class, 'storeStage'])
+            ->name('pipeline.stages.store');
+        Route::put('/stages/{stage}', [PipelineController::class, 'updateStage'])
+            ->name('pipeline.stages.update');
+        Route::delete('/stages/{stage}', [PipelineController::class, 'destroyStage'])
+            ->name('pipeline.stages.destroy');
+        /*
+         | Above the {stage} routes would be a bug waiting for somebody to name
+         | a stage "reorder"; below them it is unreachable for the same reason.
+         | It is neither: `stages/order` cannot collide with `stages/{stage}`
+         | because {stage} is bound by id, and a numeric segment never reads as
+         | the word.
+         */
+        Route::post('/stages/order', [PipelineController::class, 'reorderStages'])
+            ->name('pipeline.stages.reorder');
+
+        Route::post('/sources', [PipelineController::class, 'storeSource'])
+            ->name('pipeline.sources.store');
+        Route::put('/sources/{source}', [PipelineController::class, 'updateSource'])
+            ->name('pipeline.sources.update');
+        Route::delete('/sources/{source}', [PipelineController::class, 'destroySource'])
+            ->name('pipeline.sources.destroy');
+        Route::post('/sources/order', [PipelineController::class, 'reorderSources'])
+            ->name('pipeline.sources.reorder');
     });
 
     /* ---------------- alerts ---------------- */
@@ -342,14 +410,23 @@ Route::middleware(['auth'])->group(function () {
             ->name('integrations.test');
     });
 
+    /* ---------------- my profile (everyone) ---------------- */
+
     /*
-     | No /profile. The three Breeze routes that were here had no Vue page
-     | behind them, and DELETE /profile hard-deleted the signed-in account after
-     | nothing but a password check — straight past DeleteUserRequest and
-     | UserHandoverService, which exist so that a leaving employee's leads and
-     | follow-ups are handed to somebody before the row goes. A user is removed
-     | on the Users page or not at all.
+     | Your own row, and no id in the URL to make it anybody else's.
+     | ProfileRequest refuses role, permissions, is_active and approval_status
+     | if they are posted, so no role can promote itself from here.
+     |
+     | At /account, not /profile. The three Breeze routes that were at /profile
+     | had no Vue page behind them, and DELETE /profile hard-deleted the
+     | signed-in account after nothing but a password check — straight past
+     | DeleteUserRequest and UserHandoverService, which exist so that a leaving
+     | employee's leads and follow-ups are handed to somebody before the row
+     | goes. That URL stays a 404, and there is no DELETE here: a user is
+     | removed on the Users page or not at all.
      */
+    Route::get('/account', [AccountController::class, 'edit'])->name('account.edit');
+    Route::put('/account', [AccountController::class, 'update'])->name('account.update');
 });
 
 require __DIR__ . '/auth.php';

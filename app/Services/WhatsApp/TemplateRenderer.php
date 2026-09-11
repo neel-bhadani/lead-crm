@@ -4,6 +4,7 @@ namespace App\Services\WhatsApp;
 
 use App\Models\Lead;
 use App\Models\MessageTemplate;
+use App\Support\CrmTaxonomy;
 
 /**
  * Turns a template into the text that actually gets sent, and a mobile number
@@ -71,7 +72,7 @@ class TemplateRenderer
             'owner_phone' => $owner?->mobile_number
                 ? config('crm.country_code') . ' ' . $owner->mobile_number
                 : '',
-            'stage'       => (string) config("crm.stages.{$lead->stage}", $lead->stage),
+            'stage'       => CrmTaxonomy::stageLabel($lead->stage),
         ];
     }
 

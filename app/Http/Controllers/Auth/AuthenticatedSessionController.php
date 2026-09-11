@@ -21,6 +21,9 @@ class AuthenticatedSessionController extends Controller
         // any more, and Login.vue never read the flag
         return Inertia::render('Auth/Login', [
             'status' => session('status'),
+            // one page, two tabs; /signup opens the same page on the other one
+            'tab'    => 'signin',
+            'roles'  => SignupController::roleOptions(),
         ]);
     }
 

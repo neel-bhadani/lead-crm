@@ -10,6 +10,7 @@ use App\Models\Todo;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
+use App\Support\CrmTaxonomy;
 
 /**
  * The developments this company is selling. Admin only.
@@ -189,7 +190,7 @@ class ProjectController extends Controller
 
             'options' => [
                 'types'       => config('crm.project_types'),
-                'stageColors' => config('crm.stage_colors'),
+                'stageColors' => CrmTaxonomy::stageColors(),
                 // how many of the leads list is shown before the drill-through
                 'leadPreview' => self::LEAD_PREVIEW,
             ],
@@ -224,7 +225,7 @@ class ProjectController extends Controller
             ->groupBy('outcome_stage')
             ->pluck('total', 'outcome_stage');
 
-        return collect(config('crm.stages'))
+        return collect(CrmTaxonomy::allStages())
             ->map(fn ($label, $key) => (int) ($counts[$key] ?? 0))
             ->all();
     }
@@ -236,8 +237,8 @@ class ProjectController extends Controller
      * today, and every lead appears in exactly one row. It sums to the lead
      * total, which the event counts above deliberately do not.
      *
-     * Zero-filled and in config order, so the bars do not reorder themselves as
-     * the numbers change.
+     * Zero-filled and in the admin's stage order, so the bars do not reorder
+     * themselves as the numbers change.
      */
     private function byStage(User $user, Project $project, int $total): array
     {
@@ -247,7 +248,7 @@ class ProjectController extends Controller
             ->groupBy('stage')
             ->pluck('total', 'stage');
 
-        return collect(config('crm.stages'))
+        return collect(CrmTaxonomy::stageUniverse($counts->keys()))
             ->map(fn (string $label, string $key) => [
                 'key'   => $key,
                 'label' => $label,
@@ -275,7 +276,7 @@ class ProjectController extends Controller
             ->pluck('total', 'source')
             ->map(fn ($count, $key) => [
                 'key'   => $key,
-                'label' => config("crm.sources.$key", $key),
+                'label' => CrmTaxonomy::sourceLabel((string) $key),
                 'total' => (int) $count,
                 'share' => $total > 0 ? round(((int) $count) / $total * 100, 1) : null,
             ])
@@ -316,8 +317,8 @@ class ProjectController extends Controller
                 'name'       => $lead->full_name,
                 'mobile'     => $lead->mobile_number,
                 'stage'      => $lead->stage,
-                'stageLabel' => config("crm.stages.{$lead->stage}", $lead->stage),
-                'source'     => config("crm.sources.{$lead->source}", $lead->source),
+                'stageLabel' => CrmTaxonomy::stageLabel($lead->stage),
+                'source'     => CrmTaxonomy::sourceLabel($lead->source),
                 'owner'      => $lead->owner?->display_name,
                 'created_at' => $lead->created_at?->toIso8601String(),
             ])

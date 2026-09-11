@@ -11,6 +11,11 @@ class User extends Authenticatable
 {
     use HasFactory, Notifiable, SoftDeletes;
 
+    /*
+     | `approval_status` is deliberately not here. Two code paths write it —
+     | SignupController (pending) and UserController::approve()/reject() — and
+     | both use forceFill(), so no array of request input can ever carry it in.
+     */
     protected $fillable = [
         'first_name',
         'last_name',
@@ -57,6 +62,29 @@ class User extends Authenticatable
     public function isSalesperson(): bool
     {
         return $this->role === 'salesperson';
+    }
+
+    /* ---------------- approval ---------------- */
+
+    /** Signed up and not yet seen by an admin. */
+    public function isPending(): bool
+    {
+        return $this->approval_status === 'pending';
+    }
+
+    public function isRejected(): bool
+    {
+        return $this->approval_status === 'rejected';
+    }
+
+    /**
+     * The alert every admin gets when this account signs up, and the key that
+     * clears it from all of their bells once one of them has answered.
+     * Per-account, so two sign-ups on one day do not deduplicate into one.
+     */
+    public function approvalAlertType(): string
+    {
+        return 'account_pending.' . $this->id;
     }
 
     /* ---------------- permissions ---------------- */
@@ -155,6 +183,16 @@ class User extends Authenticatable
     public function scopeActive($query)
     {
         return $query->where('is_active', true);
+    }
+
+    /**
+     * Accounts an admin agreed to, whether or not they are switched on today.
+     * A sign-up still waiting, or one that was turned down, never worked here
+     * and has no business in a staff dropdown.
+     */
+    public function scopeApproved($query)
+    {
+        return $query->where('approval_status', 'approved');
     }
 
     /**

@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Concerns;
 
 use Illuminate\Validation\Rule;
+use App\Support\CrmTaxonomy;
 
 /**
  * The three fields that book the next follow-up, shared by the two forms that
@@ -58,6 +59,6 @@ trait SchedulesFollowUp
     /** The stage this request is moving the lead to closes it. */
     protected function stageIsTerminal(): bool
     {
-        return in_array($this->input('stage'), config('crm.terminal_stages'), true);
+        return CrmTaxonomy::isTerminal($this->input('stage'));
     }
 }

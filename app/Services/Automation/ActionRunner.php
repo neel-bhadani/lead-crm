@@ -10,6 +10,7 @@ use App\Services\AlertService;
 use App\Services\LeadFollowUpService;
 use App\Services\WhatsApp\TemplateRenderer;
 use App\Services\WhatsApp\WhatsAppSender;
+use App\Support\CrmTaxonomy;
 
 /**
  * Carries out one action of one rule.
@@ -124,8 +125,19 @@ class ActionRunner
     {
         $stage = $action['stage'] ?? null;
 
-        if (! array_key_exists($stage, config('crm.stages'))) {
+        if (! array_key_exists($stage, CrmTaxonomy::allStages())) {
             return $this->skip("This rule moves leads to '{$stage}', which is not a stage.");
+        }
+
+        /*
+         | The stage exists but has been switched off. Skipped rather than run,
+         | and skipped LOUDLY — the reason lands in the activity log, which is
+         | where an admin looks when a rule stopped doing anything. Moving leads
+         | into a stage the company has retired would go on filling a column
+         | nobody reads and nothing can be chosen out of again.
+         */
+        if (! array_key_exists($stage, CrmTaxonomy::stages())) {
+            return $this->skip("This rule moves leads to '{$stage}', which is no longer in use.");
         }
 
         if ($lead->stage === $stage) {

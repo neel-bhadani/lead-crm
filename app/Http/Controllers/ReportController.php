@@ -14,6 +14,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
+use App\Support\CrmTaxonomy;
 
 /**
  * The Reporting section: two pages, ten sidebar links.
@@ -250,8 +251,15 @@ class ReportController extends Controller
     private function leadGroups(string $dimension, array $present): array
     {
         $universe = match ($dimension) {
-            'stage'   => config('crm.stages'),
-            'source'  => config('crm.sources'),
+            /*
+             | Active stages and sources in the admin's order, plus whichever
+             | retired ones this report's own rows actually name. A stage
+             | switched off last month keeps its row on last month's report and
+             | drops off the ones it has nothing in — which is the whole promise
+             | deactivation makes.
+             */
+            'stage'   => CrmTaxonomy::stageUniverse($present),
+            'source'  => CrmTaxonomy::sourceUniverse($present),
             // every project, not only the active ones: a lead on a project that
             // has since been switched off still has to have a row to sit in
             'project' => Project::orderBy('name')->pluck('name', 'id')->all(),
@@ -674,7 +682,7 @@ class ReportController extends Controller
                 ->map(fn ($s) => $s['label'])->all(),
             'ranges'      => config('crm.date_ranges'),
             'today'       => today()->toDateString(),
-            'stageColors' => config('crm.stage_colors'),
+            'stageColors' => CrmTaxonomy::stageColors(),
         ];
     }
 

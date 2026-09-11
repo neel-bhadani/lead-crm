@@ -10,6 +10,7 @@ import AssignedTo from '@/Components/AssignedTo.vue'
 import FilterChips from '@/Components/FilterChips.vue'
 import { useFilterVisit, useDebouncedFilters } from '@/composables/useFilterVisit.js'
 import { brokerLabel } from '@/lib/brokerLabel.js'
+import { filterable } from '@/composables/useTaxonomy'
 
 const props = defineProps({
   leads: Object,
@@ -18,6 +19,9 @@ const props = defineProps({
   // the stage breakdown of this list, every filter applied except stage
   stageCounts: Object,
 })
+
+// every source there has ever been, retired ones marked — see filterable()
+const sourceFilterOptions = computed(() => filterable(props.options.sources, props.options.activeSources))
 
 const role = computed(() => usePage().props.auth.user.role)
 const canEdit = computed(() => role.value !== 'telecaller')
@@ -191,9 +195,15 @@ const ageClass = d => d === null ? 'text-slate-400'
           <option value="">All projects</option>
           <option v-for="p in options.projects" :key="p.id" :value="p.id">{{ p.name }}</option>
         </select>
+        <!--
+          Every source there has ever been, retired ones marked. A filter reads
+          rather than writes — see filterable() — so narrowing to a source the
+          admin switched off last month still finds the leads that came through
+          it, which is exactly when somebody wants to.
+        -->
         <select v-model="f.source" class="w-full md:!w-40">
           <option value="">All sources</option>
-          <option v-for="(l, k) in options.sources" :key="k" :value="k">{{ l }}</option>
+          <option v-for="o in sourceFilterOptions" :key="o.key" :value="o.key">{{ o.label }}</option>
         </select>
 
         <!--

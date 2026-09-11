@@ -1,6 +1,6 @@
 <script setup>
 import { ref, reactive, computed } from 'vue'
-import { Head, Link } from '@inertiajs/vue3'
+import { Head, Link, router } from '@inertiajs/vue3'
 import AppLayout from '@/Layouts/AppLayout.vue'
 import UserFormModal from '@/Components/UserFormModal.vue'
 import DeleteUserDialog from '@/Components/DeleteUserDialog.vue'
@@ -76,6 +76,45 @@ const permissionNote = u => {
   const on = Object.values(u.permissions).filter(Boolean).length
   return `Custom · ${on} of ${Object.keys(props.options.permissions).length} on`
 }
+
+/*
+ | Sign-ups. One badge per row saying where the account stands, and two
+ | buttons on the rows that are waiting for an answer.
+ |
+ | A pending account is switched off like a deactivated one, but it is a
+ | different thing — nobody ever agreed to have them — so it gets its own
+ | colour and its own words rather than reading as "Inactive".
+ */
+const statusBadge = u => ({
+  pending:  { label: 'Pending approval', cls: 'bg-amber-100 text-amber-900 ring-1 ring-amber-300' },
+  rejected: { label: 'Rejected', cls: 'bg-rose-50 text-rose-700' },
+}[u.approval_status] ?? (u.is_active
+  ? { label: 'Active', cls: 'bg-emerald-50 text-emerald-800' }
+  : { label: 'Inactive', cls: 'bg-slate-200 text-slate-600' }))
+
+// waiting rows are warm so they stand out; switched-off ones recede
+const rowTint = u =>
+  u.approval_status === 'pending' ? 'bg-amber-50/50' : (u.is_active ? '' : 'bg-slate-50/60')
+
+// a rejected request can still be approved later; an approved one is edited
+const canApprove = u => u.approval_status === 'pending' || u.approval_status === 'rejected'
+const canReject = u => u.approval_status === 'pending'
+
+const answering = ref(null)
+
+const answer = (u, verb) => {
+  answering.value = u.id
+  router.post(route(`users.${verb}`, u.id), {}, {
+    preserveScroll: true,
+    onFinish: () => { answering.value = null },
+  })
+}
+
+const showPending = () => {
+  filters.silently(() => { Object.keys(f).forEach(k => (f[k] = '')); f.status = 'pending' })
+  filters.cancel()
+  push()
+}
 </script>
 
 <template>
@@ -85,6 +124,21 @@ const permissionNote = u => {
     <template #actions>
       <button class="btn w-full sm:w-auto" @click="openAdd">Add user</button>
     </template>
+
+    <!--
+      Whatever the filters are showing. A request that nobody answers is a
+      person who cannot start work, and the alert that announced it may have
+      been read and forgotten.
+    -->
+    <div v-if="options.pendingCount && f.status !== 'pending'"
+         class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200
+                bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      <span>
+        <b>{{ options.pendingCount }}</b>
+        account request{{ options.pendingCount === 1 ? ' is' : 's are' }} waiting for approval.
+      </span>
+      <button class="btn-xs !border-amber-300 !text-amber-900" @click="showPending">Show them</button>
+    </div>
 
     <div class="card overflow-hidden">
 
@@ -101,6 +155,8 @@ const permissionNote = u => {
           <option value="">All statuses</option>
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
+          <option value="pending">Pending approval</option>
+          <option value="rejected">Rejected</option>
         </select>
 
         <button class="btn-ghost w-full md:w-auto" @click="clearFilters">Clear</button>
@@ -127,9 +183,9 @@ const permissionNote = u => {
         </thead>
         <tbody>
           <tr v-for="u in users.data" :key="u.id" class="border-b border-slate-100"
-              :class="u.is_active ? '' : 'bg-slate-50/60'">
+              :class="rowTint(u)">
             <td class="px-4 py-3">
-              <div class="font-semibold" :class="u.is_active ? '' : 'text-slate-500'">
+              <div class="font-semibold" :class="u.is_active || u.approval_status === 'pending' ? '' : 'text-slate-500'">
                 {{ u.display_name }}
               </div>
               <div v-if="isSelf(u)" class="text-xs text-slate-400">You</div>
@@ -140,12 +196,12 @@ const permissionNote = u => {
             </td>
             <td class="px-4 py-3">{{ options.roleLabels[u.role] ?? u.role }}</td>
             <td class="px-4 py-3">
-              <span class="rounded-full px-2 py-0.5 text-xs font-medium"
-                    :class="u.is_active
-                      ? 'bg-emerald-50 text-emerald-800'
-                      : 'bg-slate-200 text-slate-600'">
-                {{ u.is_active ? 'Active' : 'Inactive' }}
+              <span class="whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium" :class="statusBadge(u).cls">
+                {{ statusBadge(u).label }}
               </span>
+              <div v-if="u.approval_status === 'pending'" class="mt-1 text-xs text-slate-400">
+                Signed up {{ u.signed_up_on }}
+              </div>
             </td>
             <!-- the two numbers a handover would have to move -->
             <td class="px-4 py-3 tabular-nums">{{ u.open_leads_count }}</td>
@@ -153,6 +209,10 @@ const permissionNote = u => {
             <td class="px-4 py-3 text-xs text-slate-500">{{ permissionNote(u) }}</td>
             <td class="px-4 py-3">
               <div class="flex items-center gap-1.5">
+                <button v-if="canApprove(u)" class="btn-xs !border-teal-600 !bg-teal-700 !text-white hover:!bg-teal-800"
+                        :disabled="answering === u.id" @click="answer(u, 'approve')">Approve</button>
+                <button v-if="canReject(u)" class="btn-xs hover:!border-rose-600 hover:!text-rose-700"
+                        :disabled="answering === u.id" @click="answer(u, 'reject')">Reject</button>
                 <button class="btn-xs" @click="openEdit(u)">Edit</button>
                 <button class="btn-xs disabled:cursor-not-allowed disabled:opacity-40"
                         :disabled="!!lockReason(u)" :title="lockReason(u)"
@@ -165,15 +225,14 @@ const permissionNote = u => {
 
       <div v-if="users.data.length" class="divide-y divide-slate-100 lg:hidden">
         <div v-for="u in users.data" :key="u.id" class="p-4"
-             :class="u.is_active ? '' : 'bg-slate-50/60'">
+             :class="rowTint(u)">
           <div class="mb-2 flex items-start justify-between gap-3">
             <div class="min-w-0">
               <div class="truncate font-semibold">{{ u.display_name }}</div>
               <div class="truncate text-xs text-slate-400">{{ u.email }}</div>
             </div>
-            <span class="flex-none rounded-full px-2 py-0.5 text-xs font-medium"
-                  :class="u.is_active ? 'bg-emerald-50 text-emerald-800' : 'bg-slate-200 text-slate-600'">
-              {{ u.is_active ? 'Active' : 'Inactive' }}
+            <span class="flex-none rounded-full px-2 py-0.5 text-xs font-medium" :class="statusBadge(u).cls">
+              {{ statusBadge(u).label }}
             </span>
           </div>
 
@@ -188,7 +247,18 @@ const permissionNote = u => {
             <dd class="text-right tabular-nums">{{ u.pending_todos_count }}</dd>
             <dt class="text-slate-400">Permissions</dt>
             <dd class="text-right">{{ permissionNote(u) }}</dd>
+            <template v-if="u.approval_status === 'pending'">
+              <dt class="text-slate-400">Signed up</dt>
+              <dd class="text-right">{{ u.signed_up_on }}</dd>
+            </template>
           </dl>
+
+          <div v-if="canApprove(u)" class="mt-3 flex gap-2 border-t border-slate-100 pt-3">
+            <button class="btn-xs flex-1 !border-teal-600 !bg-teal-700 !text-white"
+                    :disabled="answering === u.id" @click="answer(u, 'approve')">Approve</button>
+            <button v-if="canReject(u)" class="btn-xs flex-1"
+                    :disabled="answering === u.id" @click="answer(u, 'reject')">Reject</button>
+          </div>
 
           <div class="mt-3 flex gap-2 border-t border-slate-100 pt-3">
             <button class="btn-xs flex-1" @click="openEdit(u)">Edit</button>

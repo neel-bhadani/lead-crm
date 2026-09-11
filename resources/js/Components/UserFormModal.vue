@@ -86,6 +86,10 @@ const isLastActiveAdmin = computed(() =>
 /** Why the active toggle is locked, or '' when it is not. */
 const lockedReason = computed(() => {
   if (!isEdit.value) return ''
+  // a sign-up is switched on by approving it — UserRequest refuses this too
+  if (props.user.approval_status && props.user.approval_status !== 'approved') {
+    return 'This account has not been approved. Use Approve on the Users list to let them in.'
+  }
   if (isSelf.value) return 'You cannot deactivate your own account.'
   if (isLastActiveAdmin.value) return 'This is the last active admin. Promote somebody else first.'
   return ''

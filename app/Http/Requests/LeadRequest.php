@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Http\Requests\Concerns\SchedulesFollowUp;
+use App\Http\Requests\Concerns\ValidatesTaxonomy;
 use App\Models\ChannelPartner;
 use App\Models\Lead;
 use Illuminate\Foundation\Http\FormRequest;
@@ -15,6 +16,7 @@ use Illuminate\Validation\Rule;
 class LeadRequest extends FormRequest
 {
     use SchedulesFollowUp;
+    use ValidatesTaxonomy;
 
     /**
      * Permissions, not roles.
@@ -40,7 +42,10 @@ class LeadRequest extends FormRequest
 
     public function rules(): array
     {
-        $leadId = $this->route('lead')?->id;
+        // the lead being edited, or null on store — the taxonomy rules below
+        // need its current stage and source, not just its id
+        $lead   = $this->route('lead');
+        $leadId = $lead?->id;
 
         return [
             'first_name'    => ['required', 'string', 'max:100'],
@@ -77,7 +82,12 @@ class LeadRequest extends FormRequest
             'email'         => ['nullable', 'email', 'max:150'],
             'project_id'    => ['required', 'exists:projects,id'],
 
-            'source'        => ['required', Rule::in(array_keys(config('crm.sources')))],
+            /*
+             | Active sources, plus whichever one this lead already carries —
+             | see ValidatesTaxonomy. Without the second half, switching a
+             | source off would make every lead ever filed under it uneditable.
+             */
+            'source'        => ['required', $this->activeSourceRule($lead?->source)],
 
             /*
              | `broker_name` IS NOT VALIDATED HERE ANY MORE, and that is the
@@ -132,7 +142,7 @@ class LeadRequest extends FormRequest
                 },
             ],
 
-            'stage'         => ['required', Rule::in(array_keys(config('crm.stages')))],
+            'stage'         => ['required', $this->activeStageRule($lead?->stage)],
             'reason'        => [
                 'nullable', 'required_if:stage,lost',
                 Rule::in(array_keys(config('crm.lost_reasons'))),

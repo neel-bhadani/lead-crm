@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\Lead;
 use App\Models\Todo;
 use Illuminate\Console\Command;
+use App\Support\CrmTaxonomy;
 
 /**
  * Audits the invariants the dashboard depends on. Reports only — it never
@@ -166,7 +167,7 @@ class CheckConsistency extends Command
             ->groupBy('lead_id')
             ->pluck('total', 'lead_id');
 
-        $terminal = config('crm.terminal_stages');
+        $terminal = CrmTaxonomy::terminalStages();
 
         $rows = $leads
             ->reject(fn($l) => in_array($l->stage, $terminal))
@@ -191,7 +192,7 @@ class CheckConsistency extends Command
             ->groupBy('lead_id')
             ->pluck('total', 'lead_id');
 
-        $terminal = config('crm.terminal_stages');
+        $terminal = CrmTaxonomy::terminalStages();
 
         $rows = $leads
             ->filter(fn($l) => in_array($l->stage, $terminal) && ($pending[$l->id] ?? 0) > 0)

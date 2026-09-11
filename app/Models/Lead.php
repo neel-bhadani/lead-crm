@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Support\CrmTaxonomy;
 
 class Lead extends Model
 {
@@ -109,7 +110,7 @@ class Lead extends Model
     }
     public function isTerminal(): bool
     {
-        return in_array($this->stage, config('crm.terminal_stages'));
+        return CrmTaxonomy::isTerminal($this->stage);
     }
 /* ---------------- scopes ---------------- */
     /**
@@ -134,6 +135,13 @@ class Lead extends Model
     }
     public function scopeOpen($query)
     {
-        return $query->whereNotIn('stage', config('crm.terminal_stages'));
+        /*
+         | Every terminal stage, including any that has been switched off. A
+         | lead that booked before somebody retired the Booking done stage is
+         | still booked, and reading only the active rows here would pull it
+         | back into the open pipeline — where `Lead::open()->doesntHave(
+         | 'pendingTodo')->count() === 0` would immediately stop holding.
+         */
+        return $query->whereNotIn('stage', CrmTaxonomy::terminalStages());
     }
 }

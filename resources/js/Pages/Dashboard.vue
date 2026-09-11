@@ -3,8 +3,12 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Head, Link, router, usePage } from '@inertiajs/vue3'
 import AppLayout from '@/Layouts/AppLayout.vue'
 import ChartCard from '@/Components/ChartCard.vue'
+import CrossFilterChips from '@/Components/CrossFilterChips.vue'
 import DateRangePicker from '@/Components/DateRangePicker.vue'
+import FunnelChart from '@/Components/FunnelChart.vue'
+import KpiTile from '@/Components/KpiTile.vue'
 import StageBadge from '@/Components/StageBadge.vue'
+import TileHeader from '@/Components/TileHeader.vue'
 import CompleteTaskModal from '@/Components/CompleteTaskModal.vue'
 import CallButtons from '@/Components/CallButtons.vue'
 import FollowUpModal from '@/Components/FollowUpModal.vue'
@@ -18,6 +22,8 @@ const props = defineProps({
   // owed — see the notice block further down
   todayDigest: { type: Object, default: null },
   followUps: Object,
+  // { stage, source, reached } — '' for each one that is off
+  filters: { type: Object, default: () => ({ stage: '', source: '', reached: '' }) },
   options: Object,
 })
 
@@ -40,9 +46,109 @@ const isAdmin = computed(() => usePage().props.auth.user.role === 'admin')
  | withoutEmpty() in the composable for why the reset and the dropped empties
  | belong together.
  */
-const { visit, cleanUrl } = useFilterVisit(route('dashboard'))
+/*
+ | The three cross-filter keys stay in the address bar; the date range does
+ | not. A range is a preference and lives in the session, as it always has. A
+ | cross-filter is a VIEW — "Facebook leads standing at In discussion" — and a
+ | view is a thing somebody sends to somebody else, so it has to survive a
+ | refresh and paste into a message. See cleanUrl().
+ */
+const CROSS_KEYS = ['stage', 'source', 'reached']
 
-const setRange = choice => visit({ reset: 1, ...choice })
+const { visit, cleanUrl } = useFilterVisit(route('dashboard'), CROSS_KEYS)
+
+/*
+ | The range half of a visit: a preset, or a custom pair, never both. The
+ | server reads a pair as custom whatever else it is told, so the two cannot be
+ | sent together and the one in force has to be reconstructed here rather than
+ | echoed back wholesale.
+ */
+const rangeParams = () => props.range.key === 'custom'
+  ? { from: props.range.from, to: props.range.to }
+  : { range: props.range.key }
+
+const crossParams = () => ({
+  stage: props.filters.stage,
+  source: props.filters.source,
+  reached: props.filters.reached,
+})
+
+/*
+ | Every visit carries reset=1 and then names the whole state again — the
+ | range AND the cross-filter — so the request is the entire instruction and
+ | what is missing is off. That is what lets a single visit turn one filter off
+ | while leaving the other two and the dates exactly where they were.
+ |
+ | withoutEmpty() in the composable drops the '' values on the way out, so a
+ | filter being switched off simply is not in the request. See the note at the
+ | foot of useFilterVisit.js for why reset and the dropped empties belong
+ | together.
+ */
+const push = (overrides = {}) =>
+  visit({ reset: 1, ...rangeParams(), ...crossParams(), ...overrides })
+
+/*
+ | Changing the dates keeps the cross-filter, and does not carry the old range
+ | with it: `choice` is a preset or a pair, and reset=1 has already dropped
+ | whichever of the two is not in it.
+ */
+const setRange = choice => visit({ reset: 1, ...crossParams(), ...choice })
+
+/*
+ | Clicking a segment. The same click again removes it — that is the whole of
+ | the toggle, and it is here rather than in each chart so all four visuals
+ | cannot come to disagree about what a second click does.
+ |
+ | A cross-filter applies to EVERY query on the page, the visual it was clicked
+ | on included, and there is no exception anywhere. The reason is
+ | reconciliation: a tile that quietly excused itself from the filter would be
+ | a tile whose number answers a different question from the tile beside it,
+ | and this page's whole claim is that its numbers agree with each other. It
+ | costs the clicked chart its other bars, which is what the chips above the
+ | grid and the "Clear all" beside them are for — and the live segment is
+ | always the one still on screen, so a second click on it always works.
+ */
+const toggleCross = (key, value) => {
+  if (!value) return
+
+  push({ [key]: props.filters[key] === value ? '' : value })
+}
+
+const removeCross = key => push({ [key]: '' })
+
+// back to the unfiltered page, dates untouched
+const clearCross = () => visit({ reset: 1, ...rangeParams() })
+
+/*
+ | The chips, built here rather than sent down: the page already holds the
+ | stage and source vocabularies in `options`, and a second copy of them on the
+ | wire is a second place for a label to be wrong.
+ |
+ | Stage and Reached carry the stage's own colour so that a chip, a StageBadge,
+ | a funnel band and a bar in either stage chart are the same colour for the
+ | same stage. Source has no colour in config and is given none.
+ */
+const chips = computed(() => {
+  const stages = props.options.stages ?? {}
+  const colors = props.options.stageColors ?? {}
+
+  return [
+    props.filters.stage
+      ? { key: 'stage', label: 'Stage', text: stages[props.filters.stage] ?? props.filters.stage,
+          color: colors[props.filters.stage] ?? null }
+      : null,
+    props.filters.source
+      ? { key: 'source', label: 'Source',
+          text: props.options.sources?.[props.filters.source] ?? props.filters.source, color: null }
+      : null,
+    props.filters.reached
+      ? { key: 'reached', label: 'Reached', text: stages[props.filters.reached] ?? props.filters.reached,
+          color: colors[props.filters.reached] ?? null }
+      : null,
+  ].filter(Boolean)
+})
+
+const filtered = computed(() => chips.value.length > 0)
 
 /*
  | The chart configs below read this to place a legend and size a bar. It used
@@ -81,43 +187,97 @@ onBeforeUnmount(() => {
 /*
  | The six tiles, in the words a builder uses. Every label here is a thing that
  | happened to a customer — an enquiry, a visit, a booking — rather than a
- | column name. The sub-line under each says which population it counted and
+ | column name. The note under each says which population it counted and
  | nothing else; the arithmetic behind them is untouched.
+ |
+ | Each one also carries a colour and a series. The colour comes out of
+ | config('crm.stage_colors') — for the three tiles that ARE a stage it is that
+ | stage's own colour, so the Bookings figure, the Booking done bar, the
+ | Booking done band and a Booking done badge are one green; the other three
+ | borrow from the same palette rather than introducing a second one. The
+ | series is the tile's own metric bucketed across the range, zero-filled by
+ | the server, and it is drawn without an axis or a label because nothing is
+ | meant to be read off it.
  */
-const kpis = computed(() => [
-  { v: props.cards.total, l: 'New enquiries', d: 'In the selected period',
+const kpis = computed(() => {
+  const color = props.options.stageColors ?? {}
+  const spark = props.cards.spark ?? {}
+
+  return [
+    {
+      k: 'total',
+      v: props.cards.total,
+      l: 'New enquiries',
+      /*
+       | Conversion belongs on this tile and nowhere else, because the number
+       | above it is its denominator: of these enquiries, this many have booked
+       | since. A dash when there were none to divide by — never 0%, never an
+       | error — and when there is nothing to say the note simply does not say
+       | it, where it used to print a sentence whose only content was that it
+       | had nothing to report.
+       */
+      /*
+       | Short, because six tiles across a 1280 window is about 160px each and
+       | the note gets two clamped lines of it. Every word here is carrying its
+       | weight: which table, which column, which window.
+       */
+      d: props.cards.conversion === null
+        ? 'Leads created in this period'
+        : `Created in this period · ${props.cards.conversion}% booked`,
+      /*
+       | The change against the period immediately before this one, of the same
+       | length. Absent rather than zeroed when there was no prior period to
+       | compare against.
+       */
+      delta: props.cards.delta === null
+        ? null
+        : `${props.cards.delta >= 0 ? '+' : ''}${props.cards.delta}%`,
+      deltaUp: props.cards.delta >= 0,
+      c: color.connected,
+      s: spark.total,
+    },
     /*
-     | Two extra lines, and both belong to the number above them.
-     |
-     | The delta compares the period immediately before this one. It reads as a
-     | bare line now — when there is no prior period it is simply absent, where
-     | it used to print "No prior period", a sentence whose only content was
-     | that it had nothing to say.
-     |
-     | Conversion belongs here and nowhere else, because the number above it is
-     | its denominator: of these enquiries, this many have booked since. A dash
-     | when there were none to divide by: never 0%, never an error.
+     | The two tiles the date picker does not move, and the note under each is
+     | where that is said. Every other figure on this page is "in the selected
+     | period"; these two are "right now", and a reader who is not told cannot
+     | tell a deliberate exception from a filter that failed to apply.
      */
-    d2: props.cards.delta === null
-      ? null
-      : `${props.cards.delta >= 0 ? '+' : ''}${props.cards.delta}% vs previous`,
-    d3: props.cards.conversion === null
-      ? null
-      : `${props.cards.conversion}% booked so far` },
-  /*
-   | The two tiles the date picker does not move, and the sub-line under each
-   | is where that is said. Every other figure on this page is "in the selected
-   | period"; these two are "right now", and a reader who is not told cannot
-   | tell a deliberate exception from a filter that failed to apply.
-   */
-  { v: props.cards.today, l: 'Enquiries today', d: 'Since midnight, whatever the dates' },
-  { v: props.cards.visits, l: 'Site visits', d: 'Visited in the selected period' },
-  { v: props.cards.booked, l: 'Bookings', tone: 'good', d: 'Booked in the selected period' },
-  { v: props.cards.lost, l: 'Lost', d: 'Closed without booking in the selected period' },
-  // the two panels below this card, added together
-  { v: props.cards.pending, l: 'Calls pending', tone: props.cards.pending ? 'bad' : null,
-    d: 'Due today or earlier, whatever the dates' },
-])
+    { k: 'today', v: props.cards.today, l: 'Enquiries today', flag: 'All dates',
+      d: 'Leads created since midnight', c: color.details_shared, s: spark.today },
+    { k: 'visits', v: props.cards.visits, l: 'Site visits',
+      d: 'Site visits done in this period', c: color.site_visit_done, s: spark.visits },
+    { k: 'booked', v: props.cards.booked, l: 'Bookings', tone: 'good',
+      d: 'Bookings made in this period', c: color.booking_done, s: spark.booked },
+    { k: 'lost', v: props.cards.lost, l: 'Lost',
+      d: 'Closed without booking, this period', c: color.lost, s: spark.lost },
+    // the two panels at the foot of the page, added together
+    { k: 'pending', v: props.cards.pending, l: 'Calls pending', flag: 'All dates',
+      tone: props.cards.pending ? 'bad' : null,
+      d: 'Still open, due today or earlier',
+      c: color.not_connected, s: spark.pending },
+  ]
+})
+
+/*
+ | Turning a click on a bar into a stage key.
+ |
+ | 'index' with intersect: false rather than the default hit test, and that is
+ | the difference between a chart you can steer with and one you can only leave.
+ | A bar at zero has no height and no area, so an intersecting hit test cannot
+ | find it — and a bar at zero is exactly what every other stage becomes the
+ | moment one of them is selected. Asking for the nearest INDEX instead means
+ | the whole column, or the whole row, is the target: the reader can move the
+ | filter straight from one stage to another without clearing it first.
+ |
+ | `axis` has to be named for the horizontal chart. Index mode measures along
+ | one axis and the census's categories run down the y, so left to the default
+ | it would look for a column where there are rows.
+ */
+const barIndex = (event, chart, axis = 'x') => {
+  const hit = chart.getElementsAtEventForMode(event, 'index', { intersect: false, axis }, true)
+
+  return hit.length ? hit[0].index : null
+}
 
 const tick = { color: '#64748b', font: { size: 11 } }
 const grid = { color: '#eef2f3' }
@@ -176,6 +336,13 @@ const allStagesChart = computed(() => {
     options: {
       indexAxis: 'y', responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false } },
+      // a bar is a stage, and clicking one filters the page to it. The same
+      // bar again clears it; see toggleCross().
+      onClick: (event, elements, chart) => {
+        const index = barIndex(event, chart, 'y')
+
+        if (index !== null) toggleCross('stage', rows[index]?.key)
+      },
       scales: {
         x: { grid, ticks: { ...tick, precision: 0 }, beginAtZero: true },
         y: {
@@ -227,6 +394,12 @@ const periodStagesChart = computed(() => {
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false } },
+      // the same dimension as the census above it, so the same filter key
+      onClick: (event, elements, chart) => {
+        const index = barIndex(event, chart, 'x')
+
+        if (index !== null) toggleCross('stage', rows[index]?.key)
+      },
       scales: {
         x: {
           grid: { display: false },
@@ -263,8 +436,15 @@ const periodStagesChart = computed(() => {
  | picker does. A reader who changes the range and watches this stay put has
  | been told, without reading a word, that this chart is not part of the range.
  */
-const allStagesNote = computed(() =>
-  `All enquiries ever received · ${props.charts.stagesAllTime.total} total`)
+const allStagesNote = computed(() => filtered.value
+  /*
+   | Under a cross-filter it is still every enquiry ever received, at whatever
+   | stage each stands — of the ones the filter selected. Saying "all" there
+   | would be the card claiming a population it is no longer counting, and the
+   | chips above the grid say which one it is.
+   */
+  ? `Matching enquiries, whatever the dates · ${props.charts.stagesAllTime.total} total`
+  : `All enquiries ever received · ${props.charts.stagesAllTime.total} total`)
 
 /*
  | The source palette. The stage charts do not use it — a stage's colour comes
@@ -343,6 +523,16 @@ const sourceChart = computed(() => {
     },
     options: {
       responsive: true, maintainAspectRatio: false, cutout: '58%',
+      /*
+       | A slice is a source, and only the sources with leads in them are
+       | drawn — a doughnut has no zero slice to click, unlike a bar chart's
+       | zero bar. That is what the chips are for: with a source selected the
+       | ring is that one source, and it is removed from the chip or by
+       | clicking the ring again.
+       */
+      onClick: (event, elements) => {
+        if (elements.length) toggleCross('source', props.charts.bySource[elements[0].index]?.key)
+      },
       plugins: {
         legend: { position: sourceRoomy.value ? 'right' : 'bottom',
                   labels: { boxWidth: 9, boxHeight: 9, padding: 9, color: '#64748b', font: { size: 11.5 } } },
@@ -450,6 +640,14 @@ const panels = computed(() => [
     key: 'today',
     tab: 'today',
     title: 'Due today',
+    /*
+     | The note both panels carry, and it is the same sentence in both because
+     | it is the same exception: these two are "right now". The date picker
+     | does not move them and it never has — what does move them now is a
+     | cross-filter, which narrows which leads are being asked about without
+     | touching when the calls are due.
+     */
+    note: 'Open follow-ups dated today — not moved by the date range',
     // amber, so a glance tells the two panels apart without reading the headers
     accent: 'border-l-amber-500',
     timeClass: 'text-slate-500',
@@ -469,6 +667,7 @@ const panels = computed(() => [
      */
     tab: 'overdue',
     title: 'Waiting longer',
+    note: 'Open follow-ups from before today — not moved by the date range',
     accent: 'border-l-rose-500',
     timeClass: 'font-semibold text-rose-700',
     // these are from earlier days, so the day matters as much as the time
@@ -538,104 +737,134 @@ onBeforeUnmount(() => { stopBefore(); stopSuccess() })
       <DateRangePicker :range="range" :presets="options.ranges" @select="setRange" />
     </template>
 
-    <!-- KPI strip -->
-    <div class="mb-5 grid grid-cols-1 overflow-hidden rounded-xl border border-slate-200 bg-white
-                sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-      <div v-for="(k, i) in kpis" :key="i"
-           class="border-b border-slate-100 p-4 last:border-b-0 sm:border-r xl:border-b-0 xl:last:border-r-0">
-        <div class="text-2xl font-bold tracking-tight"
-             :class="k.tone === 'bad' ? 'text-rose-700' : k.tone === 'good' ? 'text-emerald-700' : ''">
-          {{ k.v }}
-        </div>
-        <div class="mt-0.5 text-xs text-slate-500">{{ k.l }}</div>
-        <div class="mt-1.5 text-[11px] text-slate-400">{{ k.d }}</div>
-        <!-- only New enquiries carries these, and only when it has them -->
-        <div v-if="k.d2" class="text-[11px] text-slate-400">{{ k.d2 }}</div>
-        <div v-if="k.d3" class="text-[11px] text-slate-400">{{ k.d3 }}</div>
-      </div>
+    <!--
+      What the grid is currently filtered to, directly under the control that
+      sets the dates. It renders nothing when nothing is selected, so the
+      unfiltered page does not carry an empty row saying "no filters".
+    -->
+    <CrossFilterChips :chips="chips" @remove="removeCross" @clear="clearCross" />
+
+    <!--
+      Row 1 — the six figures.
+
+      6 across from xl, 3 from lg, 2 from md, 1 below it. Those are the widths
+      the CONTENT gets rather than the window: the sidebar takes 15rem from lg
+      up, so a 1024 window leaves this grid about 728px and a 768 one about
+      712px — nearly the same width for very different windows, which is why
+      the tile count steps at lg rather than tracking the window evenly.
+
+      gap-3 throughout the page, not gap-4. A BI grid is meant to read as one
+      surface with lines ruled through it; the tiles are what should be
+      noticed, not the channels between them.
+    -->
+    <div class="mb-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <KpiTile
+        v-for="k in kpis" :key="k.k"
+        :label="k.l" :value="k.v" :note="k.d" :tone="k.tone" :flag="k.flag"
+        :color="k.c" :spark="k.s" :delta="k.delta" :delta-up="k.deltaUp"
+      />
     </div>
 
     <!--
-      Three charts: the standing census across the top, and under it the two
-      questions that are only about this period.
+      Row 2 — where the enquiries stand, and which of them arrived in this
+      period. The same server query one window apart; see
+      DashboardController::stagesByLead().
 
-      The top row is where the reading starts, so it gets the full width and
-      the horizontal bars that suit it. The row underneath holds the two
-      charts a date range does move — the same stage census narrowed to these
-      dates, and where those enquiries came from — side by side from lg up and
-      stacked below it, which is the width at which half a row stops being
-      enough for either of them.
+      They are deliberately not the same shape. Drawn as a matched pair they
+      read as one chart drawn twice, and the second gets taken for a redrawing
+      of the first rather than for the different question it is. The census
+      stays horizontal, the period chart vertical, so the forms differ where
+      the questions do.
 
-      One grid rather than two, with the census spanning both columns, so a
-      single gap-4 still sets the column gap and the row gap and the three
-      cards cannot drift out of step with each other.
-
-      The titles carry the distinction between the two stage charts, and the
-      notes say it a second time — "All enquiries ever received" against
-      "Leads created in the selected period". The census ignores the picker and
-      its note is where that is said; it used to carry an ALL TIME chip beside
-      its title instead, which made it read as a different kind of panel rather
-      than as one of the charts.
-
-      So there is nothing here but a title, a note and a config on every one of
-      the three. Every scrap of card styling is in ChartCard and takes no
-      argument, which is what makes the headers identical and keeps the plot
-      boxes in step across the bottom row.
+      Both are clickable, both set the same `stage` filter, and both lift under
+      the cursor to say so.
     -->
-    <div class="mb-5 grid gap-4 lg:grid-cols-2">
-      <!--
-        Every lead ever, by the stage each is at now. No date filter.
+    <div class="mb-3 grid gap-3 md:grid-cols-2">
+      <ChartCard title="Where all enquiries stand"
+                 :note="allStagesNote"
+                 :config="allStagesChart"
+                 height="h-[248px]"
+                 clickable />
 
-        Wrapped for the same reason the doughnut is: ChartCard's root is the
-        grid item and its classes take no argument, so the column span belongs
-        to a wrapper. `grid` on it, not just `min-w-0`, so the lone child
-        stretches to the cell in both axes instead of sitting at its natural
-        height inside a stretched wrapper.
-      -->
-      <div class="grid min-w-0 lg:col-span-2">
-        <ChartCard title="Where all enquiries stand"
-                   :note="allStagesNote"
-                   :config="allStagesChart" />
-      </div>
-
-      <!-- the same census, narrowed to the leads created in the range -->
       <ChartCard title="Enquiries in this period"
                  note="Leads created in the selected period"
-                 :config="periodStagesChart" />
+                 :config="periodStagesChart"
+                 height="h-[248px]"
+                 clickable />
+    </div>
+
+    <!--
+      Row 3 — where they came from, and how far they got.
+
+      A third and two thirds from lg up: the doughnut is a ring and a short
+      list of labels and does not grow more legible with width, where the
+      funnel is six labelled bands whose whole job is to be read across. Below
+      lg they fall back to halves — the span is `lg:col-span-2` and not
+      `md:col-span-2` for exactly that reason, or the funnel would take the
+      whole of a two-column row and leave an empty cell beside the doughnut —
+      and below md to a single column.
+
+      The doughnut is wrapped so its legend can follow the width of the CARD
+      rather than the width of the window — see the ResizeObserver above.
+      `grid` on the wrapper, not merely min-w-0, so the lone child stretches to
+      the cell in both axes and the two tiles in the row stay the same height.
+    -->
+    <div class="mb-3 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+      <div ref="sourceCard" class="grid min-w-0">
+        <ChartCard title="Where enquiries came from"
+                   note="Leads created in the selected period, by source"
+                   :config="sourceChart"
+                   height="h-[248px]"
+                   clickable
+                   :empty="!charts.bySource.length" empty-text="No leads in this range" />
+      </div>
 
       <!--
-        Wrapped, so the legend can follow the width of the card rather than the
-        width of the window. The wrapper is the grid item and the card fills it,
-        so the measurement costs ChartCard nothing — no prop, no emit, no
-        knowledge on its side that anyone is watching.
+        The funnel. Six stages of one journey, each band carrying its count and
+        the drop from the band above.
 
-        `grid` on the wrapper, not just `min-w-0`: a lone grid child stretches
-        to its cell in both axes, so this card is sized by the row exactly as
-        the unwrapped one beside it is. Left as a plain block it would sit at
-        its natural height inside a stretched wrapper — invisible while both
-        cards in the row are the same height, and a bug the day one of them is
-        not.
+        Its numbers are not its own: they are stageEvents(), the query the Site
+        visits, Bookings and Lost tiles are read out of, so the Site visit done
+        band IS the Site visits tile and the Booking done band IS the Bookings
+        tile rather than two figures that happen to agree.
+
+        Clicking a band filters the page to the leads that reached that stage,
+        which is a different question from the one the stage charts ask — "has
+        been through" rather than "is standing at" — and gets a filter key of
+        its own for that reason.
       -->
-      <div ref="sourceCard" class="grid min-w-0">
-        <ChartCard title="Where enquiries came from" :config="sourceChart"
-                   :empty="!charts.bySource.length" empty-text="No leads in this range" />
+      <div class="grid min-w-0 lg:col-span-2">
+        <div class="tile tile-lift">
+          <TileHeader title="How far enquiries get"
+                      note="Leads that reached each stage in the selected period, from logged follow-ups" />
+
+          <div class="flex-1 px-4 py-3">
+            <div class="h-[248px]">
+              <FunnelChart :bands="charts.funnel.bands" :active="filters.reached"
+                           @select="key => toggleCross('reached', key)" />
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
     <!--
-      The two work lists, equal weight. Due today is first in the array, so it
-      is also the first card once the grid stacks on a phone.
+      Row 4 — the two work lists, equal weight, and unchanged.
+
+      Same queries, same rows, same Log call buttons. Side by side from lg up
+      rather than from md: half of a 768 window is 356px, and squeezing a row
+      that carries a name, a time, a mobile, a stage badge, an assignee and
+      three controls into that is a real regression to a panel this rebuild was
+      told to leave alone.
+
+      Due today is first in the array, so it is also the first card once the
+      grid stacks on a phone.
     -->
-    <div class="grid gap-4 xl:grid-cols-2">
-      <div v-for="p in panels" :key="p.key" class="card overflow-hidden">
-        <!-- fixed while the list scrolls under it -->
-        <div class="border-b border-slate-100 px-5 py-3.5">
-          <h3 class="text-sm font-semibold">
-            {{ p.title }}
-            <!-- the count reads second: label first, number after -->
-            <span class="ml-1.5 text-xs font-normal text-slate-400">{{ p.total }}</span>
-          </h3>
-        </div>
+    <div class="grid gap-3 lg:grid-cols-2">
+      <div v-for="p in panels" :key="p.key" class="tile overflow-hidden">
+        <!-- the same header as every other tile on the page, fixed while the
+             list scrolls under it -->
+        <TileHeader :title="p.title" :note="p.note" :count="p.total" />
 
         <!--
           A fixed height either way, so the two panels line up whether one holds
@@ -667,8 +896,6 @@ onBeforeUnmount(() => { stopBefore(); stopSuccess() })
               of the row. 11rem is the button cluster (two 36px icon links, a
               6px gap each side and the Update button) with room to spare, so a
               font that renders a little wide cannot push it out of the track.
-              The track was measured against a wider label than the one there
-              now, so the slack has only grown since.
             -->
             <div v-for="t in p.rows" :key="t.id"
                  class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2
@@ -690,14 +917,12 @@ onBeforeUnmount(() => { stopBefore(); stopSuccess() })
                 stage is called. The mobile is never truncated — half a phone
                 number is useless — and the badge box is 10.25rem because that
                 is the widest configured stage label, "Site visit scheduled",
-                with its dot and pill padding, plus a little slack. Sized to
-                this row's badge instead, the column would move down the panel.
+                with its dot and pill padding, plus a little slack.
 
                 The assignee takes what is left, and `basis-32` is what makes it
                 degrade by wrapping instead of by shrinking: where the row is
                 too narrow to seat all three it drops to its own line at full
-                width, rather than being squeezed to "P…". flex-wrap, not a
-                three-track grid, for exactly that reason.
+                width, rather than being squeezed to "P…".
               -->
               <div class="col-span-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1
                           text-xs text-slate-500 sm:col-span-1">

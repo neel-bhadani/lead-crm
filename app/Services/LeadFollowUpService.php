@@ -9,6 +9,7 @@ use App\Services\Automation\RuleEngine;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use App\Support\CrmTaxonomy;
 
 /**
  * Every stage change in the application goes through this class.
@@ -448,7 +449,7 @@ class LeadFollowUpService
         ?int $fromTodo = null
     ): array {
         $outcome  = ['handed_over_to' => null];
-        $terminal = in_array($stage, config('crm.terminal_stages'), true);
+        $terminal = CrmTaxonomy::isTerminal($stage);
 
         /*
          | Exactly one pending task per lead — so the one it is holding goes
@@ -471,7 +472,7 @@ class LeadFollowUpService
         }
 
         // handover — scheduling a site visit moves the lead to a salesperson
-        if ($stage === config('crm.handover_stage') && $lead->assigned_role === 'telecaller') {
+        if ($stage === CrmTaxonomy::handoverStage() && $lead->assigned_role === 'telecaller') {
             $outcome['handed_over_to'] = $this->handover($lead);
         }
 

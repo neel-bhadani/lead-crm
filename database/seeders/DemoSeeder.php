@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Models\{User, Project, Lead, Todo, ChannelPartner};
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
+use App\Support\CrmTaxonomy;
 
 class DemoSeeder extends Seeder
 {
@@ -104,7 +105,9 @@ class DemoSeeder extends Seeder
             ['Hardik', 'Meera', 'Jignesh', 'Kavita', 'Sanjay', 'Roshni', 'Bhavesh', 'Ankita', 'Vipul', 'Pooja', 'Nilesh', 'Sneha', 'Dhruv', 'Rekha', 'Manish
 ', 'Tejas', 'Ronak', 'Nidhi'];
         $last = ['Patel', 'Shah', 'Desai', 'Joshi', 'Trivedi', 'Mehta', 'Chauhan', 'Rana', 'Vaghela', 'Bhatt', 'Modi', 'Solanki'];
-        $sources = array_keys(config('crm.sources'));
+        // the vocabulary as the database holds it — the migration seeded it
+        // from config, and an admin may have edited it since
+        $sources = CrmTaxonomy::activeSourceKeys();
         foreach (range(1, 55) as $i) {
             $path = $paths[array_rand($paths)];
             $stage = end($path);
@@ -186,7 +189,7 @@ class DemoSeeder extends Seeder
             $lead->not_connected_count = $notConnected;
             $lead->save();
             // one pending to-do for every open lead — the core rule
-            if (! in_array($stage, config('crm.terminal_stages'))) {
+            if (! CrmTaxonomy::isTerminal($stage)) {
                 $offset = [-52, -26, -9, -3, -1, 2, 6, 20, 44, 70, 120][array_rand(range(0, 10))];
                 Todo::create([
                     'lead_id' => $lead->id,

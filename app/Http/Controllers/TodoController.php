@@ -15,6 +15,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
+use App\Support\CrmTaxonomy;
 
 class TodoController extends Controller
 {
@@ -118,8 +119,11 @@ class TodoController extends Controller
             'types'   => $this->typeCounts($base),
             'filters' => $this->withRangeWord($filters),
             'options' => [
-                'stages'      => config('crm.stages'),
-                'stageColors' => config('crm.stage_colors'),
+                // every stage for the labels on the history rows, the
+                // active keys for the stage dropdown in CompleteTaskModal
+                'stages'       => CrmTaxonomy::allStages(),
+                'activeStages' => CrmTaxonomy::activeStageKeys(),
+                'stageColors'  => CrmTaxonomy::stageColors(),
                 'types'       => config('crm.todo_types'),
                 // today in IST. The date inputs use this as their max rather
                 // than the browser clock, which may be in another timezone.
@@ -128,8 +132,8 @@ class TodoController extends Controller
                 // CompleteTaskModal asks for the next follow-up on every call
                 // that leaves the lead open; these two say which those are, and
                 // which stage forces the next task to be the site visit
-                'terminalStages' => config('crm.terminal_stages'),
-                'handoverStage'  => config('crm.handover_stage'),
+                'terminalStages' => CrmTaxonomy::terminalStages(),
+                'handoverStage'  => CrmTaxonomy::handoverStage(),
                 // CallButtons builds its tel: and wa.me hrefs from this
                 'countryCode' => config('crm.country_code'),
                 'roleLabels'  => config('crm.role_labels'),
@@ -144,6 +148,7 @@ class TodoController extends Controller
                     ->get(['id', 'first_name', 'last_name', 'mobile_number', 'assigned_to']),
                 'users'       => $user->isAdmin()
                     ? User::whereIn('role', ['telecaller', 'salesperson'])
+                    ->approved()
                     ->get(['id', 'first_name', 'last_name'])
                     : [],
             ],
@@ -262,7 +267,7 @@ class TodoController extends Controller
             extra: $request->only('reason', 'booked_unit', 'booking_date'),
         );
 
-        $response = back()->with('success', in_array($request->stage, config('crm.terminal_stages'), true)
+        $response = back()->with('success', CrmTaxonomy::isTerminal($request->stage)
             ? 'Call logged and the lead closed.'
             : 'Call logged and next follow-up scheduled.');
 

@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Http\Requests\Concerns\HandsOverWork;
+use App\Http\Requests\Concerns\ValidatesAccountFields;
 use App\Models\User;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -14,7 +15,7 @@ use Illuminate\Validation\Validator;
  */
 class UserRequest extends FormRequest
 {
-    use HandsOverWork;
+    use HandsOverWork, ValidatesAccountFields;
 
     /**
      * The route is already behind `role:admin`. This is the second lock on the
@@ -63,7 +64,9 @@ class UserRequest extends FormRequest
              | seeder or the database; letting this screen mint one would mean
              | a single compromised admin session could quietly install a
              | second permanent account. The list lives in config so the rule
-             | and the dropdown cannot disagree.
+             | and the dropdown cannot disagree, and the rule itself lives in
+             | ValidatesAccountFields so the sign-up tab applies this one
+             | rather than a copy of it.
              |
              | An existing admin editing their own name still passes: the rule
              | is skipped when the role is not being changed, or an admin could
@@ -73,7 +76,7 @@ class UserRequest extends FormRequest
                 'required',
                 $user?->isAdmin() && $this->input('role') === 'admin'
                     ? Rule::in(['admin'])
-                    : Rule::in(config('crm.staff_roles')),
+                    : $this->staffRoleRule(),
             ],
 
             /*
@@ -104,30 +107,27 @@ class UserRequest extends FormRequest
         ] + $this->handoverRules();
     }
 
-    /**
-     * Unique against every row the index sees, including trashed ones, with a
-     * message that says which it hit.
-     */
-    private function uniqueAmongUsers(string $column, ?User $ignore, string $trashed, string $taken): \Closure
-    {
-        return function (string $attribute, mixed $value, \Closure $fail) use ($column, $ignore, $trashed, $taken) {
-            $clash = User::withTrashed()
-                ->where($column, $value)
-                ->when($ignore, fn ($q) => $q->where('id', '!=', $ignore->id))
-                ->first();
-
-            if ($clash) {
-                $fail($clash->trashed() ? $trashed : $taken);
-            }
-        };
-    }
-
     public function withValidator(Validator $validator): void
     {
         $this->validateHandover($validator);
 
         $validator->after(function ($v) {
             $user = $this->route('user');
+
+            /*
+             | A sign-up is switched on by approving it and in no other way.
+             | The Edit modal carries the same Active checkbox for every row,
+             | and ticking it on a pending account would let somebody in with
+             | none of what approval does — no alert cleared, and an
+             | approval_status that still says nobody agreed. LoginRequest
+             | refuses anything but `approved` as well, so this is the
+             | explanation and that is the lock.
+             */
+            if ($user && $user->approval_status !== 'approved' && $this->boolean('is_active')) {
+                $v->errors()->add('is_active', 'Approve this account from the Users list before switching it on.');
+
+                return;
+            }
 
             if (! $user || $this->boolean('is_active')) {
                 return;   // adding, or not switching anybody off

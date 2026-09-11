@@ -13,11 +13,20 @@ import { withoutEmpty } from '../lib/withoutEmpty.js'
  * link: the dashboard's follow-up panels link to `/todos?tab=overdue`, the
  * server honours that tab on the way in, and the parameter is wiped on the way
  * out.
+ *
+ * `keep` names the query keys that do NOT get wiped. It is empty for every
+ * page but the dashboard, whose cross-filters are a view rather than a
+ * preference: a stage or a source somebody picked is the thing they would send
+ * to a colleague, so it stays in the address bar and a refresh lands on the
+ * same filtered dashboard rather than on the unfiltered one.
+ *
+ * @param  {string}    url   the page's own route
+ * @param  {string[]}  keep  query keys to leave in the address bar
  */
-export function useFilterVisit(url) {
+export function useFilterVisit(url, keep = []) {
     const base = new URL(url, window.location.origin).pathname
 
-    const clean = () => cleanUrl(base)
+    const clean = () => cleanUrl(base, keep)
 
     onMounted(clean)
 

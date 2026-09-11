@@ -42,6 +42,46 @@ return [
         'lost'                 => '#B23A38',
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | The stage colour palette
+    |--------------------------------------------------------------------------
+    |
+    | The only colours the Stages screen offers. A FIXED LIST rather than a free
+    | hex field, and the reason is that a stage's colour is not decoration: it
+    | is the same swatch in a badge, a chip, a funnel band, a left border on a
+    | lead row and a bar on four charts, and it has to stay legible against a
+    | white card, against its own 12% tint behind the badge text, and beside the
+    | eight other stages on the same axis. A colour picker produces #FFFF00 on
+    | white and a pipeline nobody can read, and it produces two stages one
+    | shade apart that nobody can tell from each other.
+    |
+    | The first nine are exactly the colours the stages shipped with, so the
+    | seeded rows all land on a palette entry rather than on "custom". The rest
+    | are the room to add a stage without repeating one.
+    |
+    | This stays in config on purpose. It is a design constraint on the screen
+    | rather than data the screen manages — an admin choosing which colours
+    | exist is the free-hex problem with an extra step.
+    */
+    'stage_palette' => [
+        '#8A94A0', // grey
+        '#2F6FB0', // blue
+        '#C2711A', // amber
+        '#5B58B8', // indigo
+        '#8145A8', // violet
+        '#0F766E', // teal
+        '#B4881B', // gold
+        '#1E7A45', // green
+        '#B23A38', // red
+        '#0E7490', // cyan
+        '#9D174D', // rose
+        '#4D7C0F', // olive
+        '#6D28D9', // purple
+        '#B45309', // bronze
+        '#334155', // slate
+    ],
+
     'sources' => [
         'walk_in'       => 'Walk-in',
         'incoming_call' => 'Incoming call',

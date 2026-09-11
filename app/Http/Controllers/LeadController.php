@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
+use App\Support\CrmTaxonomy;
 
 class LeadController extends Controller
 {
@@ -126,7 +127,9 @@ class LeadController extends Controller
             ->groupBy('stage')
             ->pluck('total', 'stage');
 
-        $bars = collect(config('crm.stages'))
+        // active stages in the admin's order, plus any retired one leads are
+        // still standing in — the total under these chips is summed from them
+        $bars = collect(CrmTaxonomy::stageUniverse($counts->keys()))
             ->map(fn($label, $key) => [
                 'key'   => $key,
                 'label' => $label,
@@ -148,9 +151,12 @@ class LeadController extends Controller
             'leads',
             [
                 'search'      => ['sometimes', 'string', 'max:100'],
-                'stage'       => ['sometimes', 'string', Rule::in(array_keys(config('crm.stages')))],
+                // every key, not only the active ones: filtering a list is
+                // reading, and a lead filed under a retired stage is still a
+                // lead somebody may want to narrow to
+                'stage'       => ['sometimes', 'string', Rule::in(CrmTaxonomy::stageKeys())],
                 'project_id'  => ['sometimes', 'integer', 'min:1'],
-                'source'      => ['sometimes', 'string', Rule::in(array_keys(config('crm.sources')))],
+                'source'      => ['sometimes', 'string', Rule::in(CrmTaxonomy::sourceKeys())],
                 'channel_partner_id' => ['sometimes', 'integer', 'min:1'],
                 'assigned_to' => ['sometimes', 'integer', 'min:1'],
             ] + $this->dateRangeRules(),
@@ -196,7 +202,7 @@ class LeadController extends Controller
             throw $this->duplicateMobile();
         }
 
-        return back()->with('success', in_array($request->stage, config('crm.terminal_stages'), true)
+        return back()->with('success', CrmTaxonomy::isTerminal($request->stage)
             ? 'Lead added.'
             : 'Lead added and follow-up scheduled.');
     }
@@ -401,7 +407,14 @@ class LeadController extends Controller
     private function options($user): array
     {
         return [
-            'stages'      => config('crm.stages'),
+            /*
+              | Every stage for the LABELS, the active keys for the CONTROLS.
+              | StageBadge and the lead view read the first; the stage dropdown
+              | on the form filters by the second, keeping whichever stage the
+              | lead is already in even when that one has been switched off.
+              */
+             'stages'       => CrmTaxonomy::allStages(),
+             'activeStages' => CrmTaxonomy::activeStageKeys(),
             /*
              | Who a NEW lead would be assigned to, for the follow-up clash
              | warning on the add-lead form and for nothing else.
@@ -412,11 +425,12 @@ class LeadController extends Controller
              | covered by this — the form reads that one's own assigned_to.
              */
             'defaultOwnerId' => $this->ownerFor($user),
-            'stageColors' => config('crm.stage_colors'),
+            'stageColors' => CrmTaxonomy::stageColors(),
             // today in IST. The date inputs use this as their max rather than
             // the browser clock, which may be in another timezone entirely.
             'today'       => today()->toDateString(),
-            'sources'     => config('crm.sources'),
+            'sources'       => CrmTaxonomy::allSources(),
+            'activeSources' => CrmTaxonomy::activeSourceKeys(),
             'reasons'     => config('crm.lost_reasons'),
             'projects'    => Project::active()->get(['id', 'name']),
             /*
@@ -474,12 +488,15 @@ class LeadController extends Controller
             // the follow-up the form now books itself: what kind of task it is,
             // and which stages end the chain instead of continuing it
             'types'          => config('crm.todo_types'),
-            'terminalStages' => config('crm.terminal_stages'),
-            'handoverStage'  => config('crm.handover_stage'),
+            'terminalStages' => CrmTaxonomy::terminalStages(),
+            'handoverStage'  => CrmTaxonomy::handoverStage(),
             // the Assigned-to filter only means anything to someone who can
             // see past their own rows
             'users'       => $user->can_('see_all_leads')
                 ? User::whereIn('role', ['telecaller', 'salesperson'])
+                // switched-off staff stay, their leads are still here; a
+                // sign-up nobody approved never held one
+                ->approved()
                 ->get(['id', 'first_name', 'last_name'])
                 : [],
             /*

@@ -5,6 +5,7 @@ namespace App\Services\Automation;
 use App\Models\AutomationRule;
 use App\Models\Lead;
 use Illuminate\Database\Eloquent\Builder;
+use App\Support\CrmTaxonomy;
 
 /**
  * Two questions about the same rule, answered by one piece of code.
@@ -125,7 +126,7 @@ class ConditionMatcher
 
                 $query->where('stage', $stage ?? '__none__')
                     // still moving forward is not stuck
-                    ->whereNotIn('stage', config('crm.terminal_stages'))
+                    ->whereNotIn('stage', CrmTaxonomy::terminalStages())
                     /*
                      | `stage_changed_at` is null on leads created before it was
                      | recorded and on some imported rows, so `created_at` is
