@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { Head, Link } from '@inertiajs/vue3'
+import { Head, Link, useForm } from '@inertiajs/vue3'
 import AppLayout from '@/Layouts/AppLayout.vue'
 import ProjectFormModal from '@/Components/ProjectFormModal.vue'
 
@@ -31,10 +31,32 @@ const props = defineProps({
   byStage: Array,
   bySource: Array,
   leads: Array,
+  salespeople: Array,
   options: Object,
 })
 
 const editOpen = ref(false)
+
+/*
+ | Who handles this project: the people its salesperson round robin takes turns
+ | among. Every active salesperson is listed; saving removes only the ones shown
+ | here unticked, so somebody switched off keeps their projects.
+ |
+ | The warning reads what is SAVED, not the boxes as they stand — it describes
+ | what happens to the next lead, and unsaved ticks do not change that.
+ */
+const team = useForm({
+  salesperson_ids: props.salespeople.filter(s => s.assigned).map(s => s.id),
+})
+
+const unstaffed = computed(() => !props.salespeople.some(s => s.assigned))
+
+const teamError = computed(() => Object.values(team.errors)[0] ?? null)
+
+const saveTeam = () => team.put(route('projects.salespeople.update', props.project.id), {
+  preserveScroll: true,
+  onSuccess: () => team.defaults(),
+})
 
 /* an em dash, never 0% — see ProjectController */
 const pct = v => v === null || v === undefined ? '—' : `${v}%`
@@ -104,6 +126,46 @@ const when = iso => iso
           This project is switched off, so it does not appear on the Add lead form and no new
           leads can be filed against it. Everything below is unchanged and stays that way.
         </p>
+      </div>
+
+      <!-- ---------------- salespeople ---------------- -->
+      <div class="card p-4">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div class="min-w-0">
+            <h2 class="text-sm font-semibold text-slate-900">Salespeople on this project</h2>
+            <p class="mt-0.5 text-xs text-slate-400">
+              When a lead on this project needs a salesperson, it goes to the next of the people
+              ticked here, in turn.
+            </p>
+          </div>
+          <button v-if="salespeople.length" class="btn flex-none"
+                  :disabled="team.processing || !team.isDirty" @click="saveTeam">
+            Save salespeople
+          </button>
+        </div>
+
+        <p v-if="!salespeople.length" class="warn-box mt-3">
+          There are no active salespeople. Leads that need one stay with whoever added them until a
+          salesperson is added or switched on from the Users page.
+        </p>
+
+        <template v-else>
+          <div class="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <label v-for="s in salespeople" :key="s.id"
+                   class="flex items-center gap-2.5 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700">
+              <input v-model="team.salesperson_ids" type="checkbox" :value="s.id"
+                     class="h-4 w-4 flex-none rounded border-slate-300" />
+              <span class="truncate">{{ s.name }}</span>
+            </label>
+          </div>
+
+          <p v-if="teamError" class="mt-2 text-xs text-rose-700">{{ teamError }}</p>
+
+          <p v-if="unstaffed" class="warn-box mt-3">
+            Nobody is assigned to this project. Its leads that need a salesperson go to any active
+            salesperson instead, and every admin is alerted when that happens.
+          </p>
+        </template>
       </div>
 
       <!-- ---------------- KPIs ---------------- -->

@@ -41,10 +41,37 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             // the only thing that hashes a password in this application; a
             // controller that called Hash::make() itself would double-hash
-            'password'          => 'hashed',
-            'is_active'         => 'boolean',
-            'permissions'       => 'array',
+            'password' => 'hashed',
+            'is_active' => 'boolean',
+            'permissions' => 'array',
         ];
+    }
+
+    /**
+     * `leads.assigned_role` is the role of the person in `assigned_to`, and a
+     * role change is the one write that can make them disagree without
+     * touching a lead (QA-REPORT-2 MIN-2).
+     *
+     * On the model rather than in UserController, so tinker and a seeder keep
+     * the column in step too; it runs inside whatever transaction saved the
+     * user. Every lead they hold — closed and deleted ones too, so a restore
+     * cannot bring a mismatch back. The leads themselves do not move: which
+     * desk they SHOULD be on is the admin's call, and the Users screen already
+     * warns before a demotion leaves somebody holding advanced leads.
+     *
+     * toBase(), because relabelling a lead is not activity on it and must not
+     * touch its `updated_at`.
+     */
+    protected static function booted(): void
+    {
+        static::updated(function (User $user) {
+            if ($user->wasChanged('role')) {
+                Lead::withTrashed()
+                    ->where('assigned_to', $user->id)
+                    ->toBase()
+                    ->update(['assigned_role' => $user->role]);
+            }
+        });
     }
 
     /* ---------------- role helpers ---------------- */
@@ -84,7 +111,7 @@ class User extends Authenticatable
      */
     public function approvalAlertType(): string
     {
-        return 'account_pending.' . $this->id;
+        return 'account_pending.'.$this->id;
     }
 
     /* ---------------- permissions ---------------- */
@@ -141,6 +168,12 @@ class User extends Authenticatable
     public function todos()
     {
         return $this->hasMany(Todo::class, 'assigned_to');
+    }
+
+    /** The projects this salesperson handles — see Project::salespeople(). */
+    public function projects()
+    {
+        return $this->belongsToMany(Project::class)->withTimestamps();
     }
 
     /** Only what a handover has to move: the work that is still live. */

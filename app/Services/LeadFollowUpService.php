@@ -6,10 +6,10 @@ use App\Models\Lead;
 use App\Models\Todo;
 use App\Models\User;
 use App\Services\Automation\RuleEngine;
+use App\Support\CrmTaxonomy;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use App\Support\CrmTaxonomy;
 
 /**
  * Every stage change in the application goes through this class.
@@ -52,6 +52,8 @@ use App\Support\CrmTaxonomy;
  */
 class LeadFollowUpService
 {
+    public function __construct(private LeadAssignmentService $assignment) {}
+
     /**
      * Triggers waiting for the current operation to commit.
      *
@@ -130,7 +132,7 @@ class LeadFollowUpService
      * with no open task and disappear from everyone's list.
      *
      * @return array{handed_over_to: ?string} what was decided without the user
-     *         asking — see noticeFor()
+     *                                        asking — see noticeFor()
      */
     public function complete(
         Todo $todo,
@@ -146,11 +148,11 @@ class LeadFollowUpService
             $lead = Lead::whereKey($todo->lead_id)->lockForUpdate()->firstOrFail();
 
             $todo->update([
-                'status'        => 'completed',
-                'remarks'       => $remarks,
+                'status' => 'completed',
+                'remarks' => $remarks,
                 'outcome_stage' => $stage,
-                'completed_at'  => now(),
-                'completed_by'  => $this->actorId(),
+                'completed_at' => now(),
+                'completed_by' => $this->actorId(),
             ]);
 
             $this->applyStage($lead, $stage, $extra);
@@ -208,19 +210,22 @@ class LeadFollowUpService
      * is what stops the engine writing the column itself and skipping the
      * pending to-do that has to move with it.
      *
-     * `assigned_role` is the role the lead is being worked at, not the person's
-     * job title. An admin taking a lead is working the telecaller's desk, which
-     * is exactly what LeadController::store() decides for a lead an admin adds.
+     * `assigned_role` is `$to`'s own role, always, and there is no parameter
+     * to say otherwise. It used to accept one, and an admin taking a lead was
+     * stamped `telecaller` — a label naming a desk nobody was at, which is
+     * exactly what hid QA-REPORT MIN-13. The handover asks
+     * LeadAssignmentService who holds a lead, not this label, so nothing needs
+     * it to lie.
      *
-     * @return bool  whether anything actually changed
+     * @return bool whether anything actually changed
      */
-    public function assign(Lead $lead, User $to, ?string $role = null): bool
+    public function assign(Lead $lead, User $to): bool
     {
         if ($lead->assigned_to === $to->id) {
             return false;
         }
 
-        return (bool) $this->operation(function () use ($lead, $to, $role) {
+        return (bool) $this->operation(function () use ($lead, $to) {
             /*
              | Lock the row, then write the instance the CALLER is holding.
              |
@@ -233,8 +238,8 @@ class LeadFollowUpService
              */
             Lead::whereKey($lead->id)->lockForUpdate()->firstOrFail();
 
-            $lead->assigned_to      = $to->id;
-            $lead->assigned_role    = $role ?? ($to->role === 'admin' ? 'telecaller' : $to->role);
+            $lead->assigned_to = $to->id;
+            $lead->assigned_role = $to->role;
             $lead->last_activity_at = now();
             $lead->save();
 
@@ -268,7 +273,7 @@ class LeadFollowUpService
      * next task by design, and a rule that keeps trying to give them one is a
      * rule the admin should see failing.
      *
-     * @return bool  false when the lead is terminal and there is nothing to book
+     * @return bool false when the lead is terminal and there is nothing to book
      */
     public function scheduleFollowUp(
         Lead $lead,
@@ -311,7 +316,7 @@ class LeadFollowUpService
     }
 
     /* ---------------------------------------------------------- */
-    /*  Who is doing this                                          */
+    /*  Who is doing this */
     /* ---------------------------------------------------------- */
 
     /**
@@ -342,7 +347,7 @@ class LeadFollowUpService
     }
 
     /* ---------------------------------------------------------- */
-    /*  Announcing what happened                                   */
+    /*  Announcing what happened */
     /* ---------------------------------------------------------- */
 
     /**
@@ -390,8 +395,8 @@ class LeadFollowUpService
     private function flushTriggers(): void
     {
         while ($this->pending !== []) {
-            $batch          = $this->pending;
-            $this->pending  = [];
+            $batch = $this->pending;
+            $this->pending = [];
 
             foreach ($batch as $event) {
                 app(RuleEngine::class)->dispatch(
@@ -407,7 +412,7 @@ class LeadFollowUpService
 
     private function applyStage(Lead $lead, string $stage, array $extra = []): void
     {
-        $lead->stage            = $stage;
+        $lead->stage = $stage;
         $lead->stage_changed_at = now();
         $lead->last_activity_at = now();
 
@@ -427,7 +432,7 @@ class LeadFollowUpService
         }
 
         if ($stage === 'booking_done') {
-            $lead->booked_unit  = $extra['booked_unit'] ?? $lead->booked_unit;
+            $lead->booked_unit = $extra['booked_unit'] ?? $lead->booked_unit;
             $lead->booking_date = $extra['booking_date'] ?? now()->toDateString();
         }
 
@@ -448,7 +453,7 @@ class LeadFollowUpService
         ?string $remarks,
         ?int $fromTodo = null
     ): array {
-        $outcome  = ['handed_over_to' => null];
+        $outcome = ['handed_over_to' => null];
         $terminal = CrmTaxonomy::isTerminal($stage);
 
         /*
@@ -471,9 +476,10 @@ class LeadFollowUpService
                 ->update(['status' => 'cancelled']);
         }
 
-        // handover — scheduling a site visit moves the lead to a salesperson
-        if ($stage === CrmTaxonomy::handoverStage() && $lead->assigned_role === 'telecaller') {
-            $outcome['handed_over_to'] = $this->handover($lead);
+        // handover — scheduling a site visit moves the lead to the desk that
+        // stage belongs to, when whoever holds it is not already on it
+        if ($stage === CrmTaxonomy::handoverStage()) {
+            $outcome['handed_over_to'] = $this->handover($lead, $stage);
         }
 
         if ($terminal || ! $when) {
@@ -505,16 +511,16 @@ class LeadFollowUpService
     private function recordStageChange(Lead $lead, string $stage, string $remarks): void
     {
         Todo::create([
-            'lead_id'       => $lead->id,
-            'assigned_to'   => $lead->assigned_to,
-            'created_by'    => $this->actorId(),
-            'scheduled_at'  => now(),
-            'type'          => 'call',
-            'status'        => 'completed',
-            'remarks'       => $remarks,
+            'lead_id' => $lead->id,
+            'assigned_to' => $lead->assigned_to,
+            'created_by' => $this->actorId(),
+            'scheduled_at' => now(),
+            'type' => 'call',
+            'status' => 'completed',
+            'remarks' => $remarks,
             'outcome_stage' => $stage,
-            'completed_at'  => now(),
-            'completed_by'  => $this->actorId(),
+            'completed_at' => now(),
+            'completed_by' => $this->actorId(),
         ]);
     }
 
@@ -533,45 +539,44 @@ class LeadFollowUpService
         ?int $fromTodo = null
     ): void {
         Todo::create([
-            'lead_id'             => $lead->id,
-            'assigned_to'         => $lead->assigned_to,
-            'created_by'          => $this->actorId(),
-            'scheduled_at'        => $when,
-            'type'                => $type ?? 'call',
-            'status'              => 'pending',
-            'remarks'             => $remarks,
+            'lead_id' => $lead->id,
+            'assigned_to' => $lead->assigned_to,
+            'created_by' => $this->actorId(),
+            'scheduled_at' => $when,
+            'type' => $type ?? 'call',
+            'status' => 'pending',
+            'remarks' => $remarks,
             'rescheduled_from_id' => $fromTodo,
         ]);
     }
 
     /**
-     * Round-robin across active salespeople.
-     * The counter lives in cache so it survives between requests.
+     * Move the lead to whoever LeadAssignmentService says a lead at `$stage`
+     * belongs to — the same answer, from the same code, that LeadController
+     * gets for a lead created at that stage. Two places deciding this is how a
+     * created lead and a handed-over one end up on different desks.
+     *
+     * A telecaller's lead takes the next turn from its project's salesperson
+     * round robin — the same per-project turns, the same fallback and the same
+     * admin alert as a lead created at this stage; a lead an admin was holding
+     * because no telecaller was active goes the same way, which a check on
+     * `assigned_role === 'telecaller'` used to miss; a salesperson's lead stays
+     * put. Nobody on the desk, or `handover_mode` set to `admin`, and it stays
+     * put too.
+     *
+     * Already inside this class's transaction, so the turn is taken under the
+     * project lock and rolls back with the stage change if anything fails.
      *
      * @return string|null the name the lead went to, or null if it stayed put
      */
-    private function handover(Lead $lead): ?string
+    private function handover(Lead $lead, string $stage): ?string
     {
-        if (config('crm.handover_mode') !== 'round_robin') {
+        $holder = $lead->assigned_to ? User::find($lead->assigned_to) : null;
+        $next = $this->assignment->ownerFor($stage, $holder, $lead->project_id);
+
+        if (! $next || $next->id === $lead->assigned_to) {
             return null;
         }
-
-        // the whole row, not just the id — the caller needs a name to show
-        $people = User::where('role', 'salesperson')
-            ->where('is_active', true)
-            ->orderBy('id')
-            // no 'name': the CRM migration dropped that column in favour of
-            // first_name/last_name, and display_name is built from those
-            ->get(['id', 'first_name', 'last_name', 'role']);
-
-        if ($people->isEmpty()) {
-            return null;
-        }
-
-        $lastId = (int) cache()->get('last_assigned_salesperson', 0);
-        $next   = $people->first(fn($u) => $u->id > $lastId) ?? $people->first();
-
-        cache()->forever('last_assigned_salesperson', $next->id);
 
         /*
          | assign() rather than four lines of column writing, because it also
@@ -584,7 +589,7 @@ class LeadFollowUpService
          | The new task, if there is one, is created after this returns and
          | reads $lead->assigned_to, so it lands on the salesperson by itself.
          */
-        $this->assign($lead, $next, 'salesperson');
+        $this->assign($lead, $next);
 
         return $next->display_name;
     }

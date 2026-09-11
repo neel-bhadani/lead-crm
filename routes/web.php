@@ -136,6 +136,10 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
         Route::post('/projects', [ProjectController::class, 'store'])->name('projects.store');
         Route::put('/projects/{project}', [ProjectController::class, 'update'])->name('projects.update');
+        // who the project's salesperson round robin takes turns among — the
+        // checkboxes on its detail page, not a page of their own
+        Route::put('/projects/{project}/salespeople', [ProjectController::class, 'updateSalespeople'])
+            ->name('projects.salespeople.update');
         /*
          | Soft delete, and refused outright while the project has any leads —
          | see ProjectController::destroy(). `leads.project_id` cascades on
@@ -429,4 +433,4 @@ Route::middleware(['auth'])->group(function () {
     Route::put('/account', [AccountController::class, 'update'])->name('account.update');
 });
 
-require __DIR__ . '/auth.php';
+require __DIR__.'/auth.php';

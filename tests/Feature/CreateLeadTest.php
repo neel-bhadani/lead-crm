@@ -20,21 +20,25 @@ class CreateLeadTest extends TestCase
     use RefreshDatabase;
 
     private User $admin;
+
     private User $salesperson;
+
     private User $telecaller;
+
     private Project $alpha;
+
     private Project $beta;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->admin       = $this->user('admin', 'Ann');
+        $this->admin = $this->user('admin', 'Ann');
         $this->salesperson = $this->user('salesperson', 'Sam');
-        $this->telecaller  = $this->user('telecaller', 'Tia');
+        $this->telecaller = $this->user('telecaller', 'Tia');
 
         $this->alpha = Project::create(['name' => 'Alpha']);
-        $this->beta  = Project::create(['name' => 'Beta']);
+        $this->beta = Project::create(['name' => 'Beta']);
     }
 
     /* ---------------- the happy paths ---------------- */
@@ -56,18 +60,35 @@ class CreateLeadTest extends TestCase
         $this->assertSame(0, Lead::open()->doesntHave('pendingTodo')->count());
     }
 
-    public function test_a_salesperson_creates_a_lead_and_keeps_it(): void
+    /**
+     * Routed by the stage, not the creator: a salesperson keeps a lead they add
+     * at a salesperson's stage, and a fresh one — which only needs calling —
+     * goes to the telecaller like anybody else's.
+     */
+    public function test_a_salesperson_keeps_a_lead_at_a_sales_stage_and_hands_a_fresh_one_to_a_telecaller(): void
     {
         $this->actingAs($this->salesperson)
-            ->post('/leads', $this->payload())
+            ->post('/leads', $this->payload(['stage' => 'in_discussion']))
             ->assertRedirect()
             ->assertSessionHasNoErrors();
 
-        $lead = Lead::firstOrFail();
+        $kept = Lead::firstOrFail();
 
-        $this->assertSame($this->salesperson->id, $lead->assigned_to);
-        $this->assertSame('salesperson', $lead->assigned_role);
-        $this->assertSame($this->salesperson->id, $lead->pendingTodo->assigned_to);
+        $this->assertSame($this->salesperson->id, $kept->assigned_to);
+        $this->assertSame('salesperson', $kept->assigned_role);
+        $this->assertSame($this->salesperson->id, $kept->pendingTodo->assigned_to);
+
+        $this->actingAs($this->salesperson)
+            ->post('/leads', $this->payload(['mobile_number' => '9512779298']))
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+
+        $fresh = Lead::where('mobile_number', '9512779298')->firstOrFail();
+
+        $this->assertSame($this->telecaller->id, $fresh->assigned_to);
+        $this->assertSame('telecaller', $fresh->assigned_role);
+        $this->assertSame($this->salesperson->id, $fresh->created_by);
+        $this->assertSame($this->telecaller->id, $fresh->pendingTodo->assigned_to);
         $this->assertSame(0, Lead::open()->doesntHave('pendingTodo')->count());
     }
 
@@ -84,6 +105,9 @@ class CreateLeadTest extends TestCase
         $lead = Lead::firstOrFail();
 
         $this->assertSame($this->admin->id, $lead->assigned_to);
+        // QA-REPORT MIN-13: labelled with the role of the person holding it,
+        // not with the telecaller desk nobody was at
+        $this->assertSame('admin', $lead->assigned_role);
         $this->assertNotNull($lead->pendingTodo);
         $this->assertSame($this->admin->id, $lead->pendingTodo->assigned_to);
         $this->assertSame(0, Lead::open()->doesntHave('pendingTodo')->count());
@@ -158,7 +182,7 @@ class CreateLeadTest extends TestCase
         $this->actingAs($this->admin)
             ->postJson('/leads/check-duplicate', [
                 'mobile_number' => '9512779297',
-                'project_id'    => $this->alpha->id,
+                'project_id' => $this->alpha->id,
             ])
             ->assertOk()
             ->assertJsonPath('exists', true)
@@ -228,10 +252,17 @@ class CreateLeadTest extends TestCase
     public function test_the_form_cannot_choose_its_own_owner(): void
     {
         $this->actingAs($this->salesperson)
-            ->post('/leads', $this->payload(['assigned_to' => $this->admin->id]))
+            ->post('/leads', $this->payload([
+                'stage' => 'connected',
+                'assigned_to' => $this->admin->id,
+                'assigned_role' => 'telecaller',
+            ]))
             ->assertRedirect();
 
-        $this->assertSame($this->salesperson->id, Lead::firstOrFail()->assigned_to);
+        $lead = Lead::firstOrFail();
+
+        $this->assertSame($this->salesperson->id, $lead->assigned_to);
+        $this->assertSame('salesperson', $lead->assigned_role);
     }
 
     /* ---------------- fixtures ---------------- */
@@ -239,31 +270,31 @@ class CreateLeadTest extends TestCase
     private function payload(array $overrides = []): array
     {
         return array_merge([
-            'first_name'    => 'Neel',
-            'last_name'     => 'Bhadani',
+            'first_name' => 'Neel',
+            'last_name' => 'Bhadani',
             'mobile_number' => '9512779297',
-            'email'         => 'neel@example.test',
-            'project_id'    => $this->alpha->id,
-            'source'        => 'walk_in',
-            'stage'         => 'fresh',
+            'email' => 'neel@example.test',
+            'project_id' => $this->alpha->id,
+            'source' => 'walk_in',
+            'stage' => 'fresh',
             // follow-ups are booked by hand now, so the form carries the first
             // one. Harmless on the terminal-stage cases: LeadRequest stops
             // requiring these and the service creates no task for a closed lead.
             'follow_up_type' => 'call',
-            'follow_up_at'   => now()->addDay()->format('Y-m-d H:i'),
+            'follow_up_at' => now()->addDay()->format('Y-m-d H:i'),
         ], $overrides);
     }
 
     private function user(string $role, string $first): User
     {
         return User::create([
-            'first_name'    => $first,
-            'last_name'     => 'User',
-            'email'         => "$role@example.test",
+            'first_name' => $first,
+            'last_name' => 'User',
+            'email' => "$role@example.test",
             'mobile_number' => (string) fake()->unique()->numberBetween(9000000000, 9999999999),
-            'role'          => $role,
-            'is_active'     => true,
-            'password'      => 'password',
+            'role' => $role,
+            'is_active' => true,
+            'password' => 'password',
         ]);
     }
 }

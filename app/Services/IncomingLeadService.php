@@ -26,7 +26,13 @@ use Illuminate\Support\Facades\DB;
  */
 class IncomingLeadService
 {
-    public function __construct(private LeadFollowUpService $followUps) {}
+    public function __construct(
+        private LeadFollowUpService $followUps,
+        private LeadAssignmentService $assignment,
+    ) {}
+
+    /** Where every imported lead starts: nobody has spoken to them yet. */
+    private const STAGE = 'fresh';
 
     /** @var string returned by import() when the same external_id arrived before */
     public const DUPLICATE = 'duplicate';
@@ -43,9 +49,9 @@ class IncomingLeadService
     public function import(Integration $integration, string $externalId, array $attributes, string $source): array
     {
         $projectId = (int) $integration->setting('default_project_id');
-        $owner     = User::find($integration->setting('assign_to_user_id'));
+        $holder = User::find($integration->setting('assign_to_user_id'));
 
-        if (! $owner) {
+        if (! $holder) {
             // configured against somebody who has since been deleted: a lead
             // with no owner would be invisible on every list in the application
             throw new \RuntimeException('The user this integration assigns leads to no longer exists.');
@@ -63,8 +69,8 @@ class IncomingLeadService
 
         if ($existing) {
             return [
-                'result'  => self::DUPLICATE,
-                'lead'    => $existing,
+                'result' => self::DUPLICATE,
+                'lead' => $existing,
                 'message' => "Already imported as lead #{$existing->id}; nothing created.",
             ];
         }
@@ -86,8 +92,8 @@ class IncomingLeadService
 
         if ($repeat) {
             return [
-                'result'  => self::REPEAT,
-                'lead'    => $repeat,
+                'result' => self::REPEAT,
+                'lead' => $repeat,
                 'message' => $repeat->trashed()
                     ? "This number is on deleted lead #{$repeat->id} for this project. Restore that lead rather than importing it again."
                     : "This number is already lead #{$repeat->id} on this project — a repeat enquiry, not a new lead.",
@@ -95,17 +101,32 @@ class IncomingLeadService
         }
 
         try {
-            $lead = DB::transaction(function () use ($attributes, $externalId, $projectId, $owner, $source) {
+            $lead = DB::transaction(function () use ($attributes, $externalId, $projectId, $holder, $source) {
+                /*
+                 | Routed like every other new lead: by its stage and project,
+                 | through the same LeadAssignmentService the Leads page and the
+                 | handover use. The integration's configured user is the
+                 | holder — they keep it when they are on the stage's desk, and
+                 | it falls back to them when that desk is empty — but a `fresh`
+                 | lead goes to a telecaller whoever was configured, because
+                 | calling it is the only work it has.
+                 |
+                 | Asked here, after the two early returns and inside the
+                 | transaction, so neither a redelivery nor a concurrent one the
+                 | unique index refuses takes a turn from a round robin.
+                 */
+                $owner = $this->assignment->ownerFor(self::STAGE, $holder, $projectId);
+
                 $lead = Lead::create($attributes + [
-                    'project_id'       => $projectId,
-                    'source'           => $source,
-                    'external_id'      => $externalId,
-                    'stage'            => 'fresh',
-                    'assigned_to'      => $owner->id,
-                    'assigned_role'    => $owner->role,
+                    'project_id' => $projectId,
+                    'source' => $source,
+                    'external_id' => $externalId,
+                    'stage' => self::STAGE,
+                    'assigned_to' => $owner->id,
+                    'assigned_role' => $owner->role,
                     // nobody typed this in; created_by is nullable and stays
                     // null, which is what marks a lead as machine-created
-                    'created_by'       => null,
+                    'created_by' => null,
                     'stage_changed_at' => now(),
                     'last_activity_at' => now(),
                 ]);
@@ -128,7 +149,7 @@ class IncomingLeadService
                     $lead,
                     now(),
                     'call',
-                    'Lead arrived from ' . config("integrations.providers.$source.name", $source) . '. Call as soon as possible.',
+                    'Lead arrived from '.config("integrations.providers.$source.name", $source).'. Call as soon as possible.',
                 );
 
                 return $lead;
@@ -144,8 +165,8 @@ class IncomingLeadService
              | failed job Meta would retry forever.
              */
             return [
-                'result'  => self::DUPLICATE,
-                'lead'    => Lead::withTrashed()->where('external_id', $externalId)->first(),
+                'result' => self::DUPLICATE,
+                'lead' => Lead::withTrashed()->where('external_id', $externalId)->first(),
                 'message' => 'A concurrent delivery created this lead first; nothing created.',
             ];
         }

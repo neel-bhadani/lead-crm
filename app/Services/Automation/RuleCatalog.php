@@ -30,10 +30,10 @@ class RuleCatalog
     public function payload(): array
     {
         return [
-            'triggers'   => config('automation.triggers'),
+            'triggers' => config('automation.triggers'),
             'conditions' => config('automation.conditions'),
-            'actions'    => config('automation.actions'),
-            'options'    => $this->options(),
+            'actions' => config('automation.actions'),
+            'options' => $this->options(),
             /*
              | The recipient phrases as well as the recipient labels. A label
              | names a dropdown option ("Everybody in a role"); a phrase is the
@@ -42,7 +42,7 @@ class RuleCatalog
              | needs both, and neither can be derived from the other.
              */
             'alert_recipients' => config('automation.alert_recipients'),
-            'loop'       => config('automation.loop_protection'),
+            'loop' => config('automation.loop_protection'),
         ];
     }
 
@@ -65,15 +65,17 @@ class RuleCatalog
              | rule would blank a condition they never touched. An option
              | reading "In discussion (no longer in use)" tells them instead.
              */
-            'stages'     => $this->fromMap(CrmTaxonomy::stages(), CrmTaxonomy::allStages()),
-            'sources'    => $this->fromMap(CrmTaxonomy::sources(), CrmTaxonomy::allSources()),
+            'stages' => $this->fromMap(CrmTaxonomy::stages(), CrmTaxonomy::allStages()),
+            'sources' => $this->fromMap(CrmTaxonomy::sources(), CrmTaxonomy::allSources()),
             'todo_types' => $this->fromMap(config('crm.todo_types')),
 
             /*
-             | Staff roles only. Admin is not an assignment target and not a
-             | value `leads.assigned_role` ever holds — an admin creating a lead
-             | files it under `telecaller`. Alerting all admins is its own
-             | recipient option rather than a role.
+             | Staff roles only. Admin is not an assignment target. It can be a
+             | value of `leads.assigned_role` — that column is always the
+             | owner's own role, and an admin holds a lead when no telecaller
+             | was active to take it — but a rule sharing work out "among the
+             | admins" is not something to offer. Alerting all admins is its
+             | own recipient option rather than a role.
              */
             /*
              | `role_words`, not `role_labels`. The abbreviated labels are for
@@ -105,7 +107,7 @@ class RuleCatalog
                 ->get(['id', 'first_name', 'last_name', 'role'])
                 ->map(fn (User $u) => [
                     'value' => $u->id,
-                    'label' => $u->display_name . ' · ' . config("crm.role_labels.$u->role", $u->role),
+                    'label' => $u->display_name.' · '.config("crm.role_labels.$u->role", $u->role),
                 ])
                 ->all(),
 
@@ -165,7 +167,7 @@ class RuleCatalog
          */
         foreach ($withRetired ?? [] as $key => $label) {
             if (! array_key_exists($key, $map ?? [])) {
-                $options[] = ['value' => $key, 'label' => $label . ' (no longer in use)'];
+                $options[] = ['value' => $key, 'label' => $label.' (no longer in use)'];
             }
         }
 

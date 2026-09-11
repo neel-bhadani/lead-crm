@@ -41,6 +41,19 @@ class Project extends Model
         return $this->belongsTo(User::class, 'created_by');
     }
 
+    /**
+     * The salespeople ticked for this project on its detail page.
+     *
+     * The pivot as stored, unfiltered: somebody switched off or moved to
+     * another desk keeps their row, so switching them back on restores their
+     * projects. LeadAssignmentService narrows it to the active salespeople
+     * when it takes turns.
+     */
+    public function salespeople()
+    {
+        return $this->belongsToMany(User::class)->withTimestamps();
+    }
+
     public function scopeActive($query)
     {
         return $query->where('is_active', true);

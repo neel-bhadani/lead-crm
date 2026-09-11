@@ -2,10 +2,13 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\ProjectController;
+use App\Models\Alert;
 use App\Models\Lead;
 use App\Models\Project;
 use App\Models\Todo;
 use App\Models\User;
+use App\Services\AlertService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Inertia\Testing\AssertableInertia as Assert;
@@ -28,14 +31,16 @@ use Tests\TestCase;
  * breakdown is where leads stand right now. Those are different numbers on
  * purpose and the tests say so.
  *
- * @see \App\Http\Controllers\ProjectController
+ * @see ProjectController
  */
 class ProjectsPageTest extends TestCase
 {
     use RefreshDatabase;
 
     private User $admin;
+
     private User $tele;
+
     private User $sales;
 
     protected function setUp(): void
@@ -45,7 +50,7 @@ class ProjectsPageTest extends TestCase
         Carbon::setTestNow(Carbon::parse('2026-09-08 11:00', 'Asia/Kolkata'));
 
         $this->admin = $this->user('admin', 'Ann');
-        $this->tele  = $this->user('telecaller', 'Tara');
+        $this->tele = $this->user('telecaller', 'Tara');
         $this->sales = $this->user('salesperson', 'Sam');
     }
 
@@ -67,9 +72,13 @@ class ProjectsPageTest extends TestCase
             $this->actingAs($user)->post(route('projects.store'), $this->payload())->assertForbidden();
             $this->actingAs($user)->put(route('projects.update', $project), $this->payload())->assertForbidden();
             $this->actingAs($user)->delete(route('projects.destroy', $project))->assertForbidden();
+            $this->actingAs($user)
+                ->put(route('projects.salespeople.update', $project), ['salesperson_ids' => [$this->sales->id]])
+                ->assertForbidden();
         }
 
         $this->assertSame(1, Project::count(), 'nothing was created by a non-admin');
+        $this->assertSame(0, $project->salespeople()->count(), 'nor anybody ticked');
 
         $this->actingAs($this->admin)->get(route('projects.index'))->assertOk();
         $this->actingAs($this->admin)->get(route('projects.show', $project))->assertOk();
@@ -87,7 +96,7 @@ class ProjectsPageTest extends TestCase
     public function test_the_list_counts_leads_and_bookings_per_project(): void
     {
         $alpha = $this->project(['name' => 'Alpha Heights']);
-        $beta  = $this->project(['name' => 'Beta Court']);
+        $beta = $this->project(['name' => 'Beta Court']);
 
         // three leads on Alpha, one of which has booked
         $booked = $this->lead($alpha, ['mobile_number' => '9800000001']);
@@ -114,7 +123,7 @@ class ProjectsPageTest extends TestCase
     public function test_a_lead_that_booked_twice_is_counted_once(): void
     {
         $project = $this->project();
-        $lead    = $this->lead($project);
+        $lead = $this->lead($project);
 
         // booked, cancelled, booked again — still one lead that got there
         $this->event($lead, 'booking_done', Carbon::parse('2026-08-01 10:00'));
@@ -127,7 +136,7 @@ class ProjectsPageTest extends TestCase
     public function test_an_uncompleted_booking_todo_is_not_a_booking(): void
     {
         $project = $this->project();
-        $lead    = $this->lead($project);
+        $lead = $this->lead($project);
 
         // an outcome recorded on a row that was never completed is not a thing
         // that happened
@@ -204,7 +213,7 @@ class ProjectsPageTest extends TestCase
                 ->has('bySource', 2));
 
         $response = $this->actingAs($this->admin)->get(route('projects.show', $project));
-        $props    = $response->viewData('page')['props'];
+        $props = $response->viewData('page')['props'];
 
         // by stage: where leads stand today, and it sums to the lead total
         $stages = collect($props['byStage'])->pluck('total', 'key');
@@ -246,8 +255,8 @@ class ProjectsPageTest extends TestCase
 
         for ($i = 0; $i < 13; $i++) {
             $this->lead($project, [
-                'mobile_number' => '98000000' . str_pad((string) $i, 2, '0', STR_PAD_LEFT),
-                'first_name'    => "Lead$i",
+                'mobile_number' => '98000000'.str_pad((string) $i, 2, '0', STR_PAD_LEFT),
+                'first_name' => "Lead$i",
             ]);
         }
 
@@ -326,7 +335,7 @@ class ProjectsPageTest extends TestCase
     public function test_an_edit_cannot_reassign_authorship(): void
     {
         $project = $this->project(['created_by' => $this->admin->id]);
-        $other   = $this->user('admin', 'Bea');
+        $other = $this->user('admin', 'Bea');
 
         $this->actingAs($other)
             ->put(route('projects.update', $project), $this->payload(['created_by' => $other->id]))
@@ -349,7 +358,7 @@ class ProjectsPageTest extends TestCase
     public function test_deactivating_removes_it_from_the_add_lead_form_and_keeps_everything(): void
     {
         $project = $this->project();
-        $lead    = $this->lead($project);
+        $lead = $this->lead($project);
 
         $this->actingAs($this->admin)
             ->put(route('projects.update', $project), $this->payload([
@@ -373,8 +382,8 @@ class ProjectsPageTest extends TestCase
     public function test_a_project_with_leads_cannot_be_deleted_and_says_why(): void
     {
         $project = $this->project();
-        $lead    = $this->lead($project);
-        $todo    = $this->event($lead, 'site_visit_done');
+        $lead = $this->lead($project);
+        $todo = $this->event($lead, 'site_visit_done');
 
         $this->actingAs($this->admin)->delete(route('projects.destroy', $project))
             ->assertSessionHas('error', fn (string $m) => str_contains($m, 'Switch the project off instead'));
@@ -390,7 +399,7 @@ class ProjectsPageTest extends TestCase
     public function test_a_project_whose_leads_are_only_in_the_bin_still_cannot_be_deleted(): void
     {
         $project = $this->project();
-        $lead    = $this->lead($project);
+        $lead = $this->lead($project);
 
         $lead->delete();   // soft deleted, and restorable
 
@@ -414,7 +423,7 @@ class ProjectsPageTest extends TestCase
     public function test_the_delete_button_is_withheld_for_leads_that_are_only_in_the_bin(): void
     {
         $project = $this->project();
-        $lead    = $this->lead($project);
+        $lead = $this->lead($project);
 
         $lead->delete();
 
@@ -425,11 +434,12 @@ class ProjectsPageTest extends TestCase
                 // but the button is withheld, matching what destroy() would do
                 ->where('projects.data.0.deletable', false));
     }
+
     public function test_a_project_with_no_leads_is_soft_deleted_and_the_cascade_never_fires(): void
     {
-        $keep    = $this->project(['name' => 'Keep']);
+        $keep = $this->project(['name' => 'Keep']);
         $keepers = $this->lead($keep);
-        $empty   = $this->project(['name' => 'Empty']);
+        $empty = $this->project(['name' => 'Empty']);
 
         $this->actingAs($this->admin)->delete(route('projects.destroy', $empty))
             ->assertSessionHas('success');
@@ -456,14 +466,80 @@ class ProjectsPageTest extends TestCase
             ->assertInertia(fn (Assert $page) => $page->has('projects.data', 0));
     }
 
+    /* ================= salespeople ================= */
+
+    public function test_the_detail_lists_every_active_salesperson_and_who_is_ticked(): void
+    {
+        $project = $this->project();
+        $nia = $this->user('salesperson', 'Nia');
+        $off = $this->user('salesperson', 'Off');
+        $off->update(['is_active' => false]);
+        $project->salespeople()->attach([$nia->id, $off->id]);
+
+        $this->actingAs($this->admin)
+            ->get(route('projects.show', $project))
+            ->assertInertia(fn (Assert $page) => $page
+                // active salespeople only — not the telecaller, not Off
+                ->has('salespeople', 2)
+                ->where('salespeople.0', ['id' => $nia->id, 'name' => 'Nia User', 'assigned' => true])
+                ->where('salespeople.1', ['id' => $this->sales->id, 'name' => 'Sam User', 'assigned' => false]));
+    }
+
+    /**
+     * Saving removes only the people the page showed unticked: a salesperson
+     * switched off keeps their projects for when they come back. Ticking
+     * somebody answers the "no salesperson" alert on every admin's bell.
+     */
+    public function test_saving_the_ticks_keeps_switched_off_salespeople_and_clears_the_alert(): void
+    {
+        $project = $this->project();
+        $nia = $this->user('salesperson', 'Nia');
+        $off = $this->user('salesperson', 'Off');
+        $off->update(['is_active' => false]);
+        $project->salespeople()->attach([$nia->id, $off->id]);
+
+        app(AlertService::class)->raise($this->admin, "project_without_salespeople.{$project->id}", 'No salesperson');
+
+        $this->actingAs($this->admin)
+            ->put(route('projects.salespeople.update', $project), ['salesperson_ids' => [$this->sales->id]])
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas('success');
+
+        $this->assertEqualsCanonicalizing([$this->sales->id, $off->id], $project->salespeople()->pluck('users.id')->all());
+        $this->assertSame(0, Alert::unread()->count(), 'answered');
+
+        // unticking everybody is allowed, and says what it means
+        $this->actingAs($this->admin)
+            ->put(route('projects.salespeople.update', $project), ['salesperson_ids' => []])
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas('warning');
+
+        $this->assertSame([$off->id], $project->salespeople()->pluck('users.id')->all());
+    }
+
+    public function test_only_an_active_salesperson_can_be_ticked(): void
+    {
+        $project = $this->project();
+        $off = $this->user('salesperson', 'Off');
+        $off->update(['is_active' => false]);
+
+        foreach ([$this->tele->id, $this->admin->id, $off->id, 999999] as $id) {
+            $this->actingAs($this->admin)
+                ->put(route('projects.salespeople.update', $project), ['salesperson_ids' => [$this->sales->id, $id]])
+                ->assertSessionHasErrors('salesperson_ids.1');
+        }
+
+        $this->assertSame(0, $project->salespeople()->count(), 'nothing half-saved');
+    }
+
     /* ================= helpers ================= */
 
     private function payload(array $overrides = []): array
     {
         return $overrides + [
-            'name'      => 'A project',
-            'location'  => 'Surat',
-            'type'      => 'residential',
+            'name' => 'A project',
+            'location' => 'Surat',
+            'type' => 'residential',
             'is_active' => true,
         ];
     }
@@ -471,10 +547,10 @@ class ProjectsPageTest extends TestCase
     private function project(array $attrs = []): Project
     {
         return Project::create($attrs + [
-            'name'       => 'Skyline Residency',
-            'location'   => 'Vesu, Surat',
-            'type'       => 'residential',
-            'is_active'  => true,
+            'name' => 'Skyline Residency',
+            'location' => 'Vesu, Surat',
+            'type' => 'residential',
+            'is_active' => true,
             'created_by' => $this->admin->id,
         ]);
     }
@@ -482,16 +558,16 @@ class ProjectsPageTest extends TestCase
     private function lead(Project $project, array $attrs = []): Lead
     {
         return Lead::create($attrs + [
-            'first_name'       => 'Rahul',
-            'last_name'        => 'Mehta',
-            'mobile_number'    => '9876543210',
-            'project_id'       => $project->id,
-            'source'           => 'walk_in',
-            'stage'            => 'fresh',
-            'assigned_to'      => $this->tele->id,
-            'assigned_role'    => 'telecaller',
+            'first_name' => 'Rahul',
+            'last_name' => 'Mehta',
+            'mobile_number' => '9876543210',
+            'project_id' => $project->id,
+            'source' => 'walk_in',
+            'stage' => 'fresh',
+            'assigned_to' => $this->tele->id,
+            'assigned_role' => 'telecaller',
             'stage_changed_at' => now(),
-            'created_by'       => $this->admin->id,
+            'created_by' => $this->admin->id,
         ]);
     }
 
@@ -499,28 +575,28 @@ class ProjectsPageTest extends TestCase
     private function event(Lead $lead, string $stage, ?Carbon $at = null): Todo
     {
         return Todo::create([
-            'lead_id'       => $lead->id,
-            'assigned_to'   => $lead->assigned_to,
-            'created_by'    => $this->admin->id,
-            'scheduled_at'  => $at ?? now(),
-            'type'          => 'call',
-            'status'        => 'completed',
+            'lead_id' => $lead->id,
+            'assigned_to' => $lead->assigned_to,
+            'created_by' => $this->admin->id,
+            'scheduled_at' => $at ?? now(),
+            'type' => 'call',
+            'status' => 'completed',
             'outcome_stage' => $stage,
-            'completed_at'  => $at ?? now(),
-            'completed_by'  => $this->admin->id,
+            'completed_at' => $at ?? now(),
+            'completed_by' => $this->admin->id,
         ]);
     }
 
     private function user(string $role, string $first): User
     {
         return User::create([
-            'first_name'    => $first,
-            'last_name'     => 'User',
-            'email'         => strtolower($first) . '@example.test',
+            'first_name' => $first,
+            'last_name' => 'User',
+            'email' => strtolower($first).'@example.test',
             'mobile_number' => (string) fake()->unique()->numberBetween(9000000000, 9999999999),
-            'role'          => $role,
-            'is_active'     => true,
-            'password'      => 'password',
+            'role' => $role,
+            'is_active' => true,
+            'password' => 'password',
         ]);
     }
 }

@@ -3,15 +3,15 @@
 return [
 
     'stages' => [
-        'fresh'                => 'Fresh',
-        'connected'            => 'Connected',
-        'not_connected'        => 'Not connected',
-        'details_shared'       => 'Details shared',
+        'fresh' => 'Fresh',
+        'connected' => 'Connected',
+        'not_connected' => 'Not connected',
+        'details_shared' => 'Details shared',
         'site_visit_scheduled' => 'Site visit scheduled',
-        'site_visit_done'      => 'Site visit done',
-        'in_discussion'        => 'In discussion',
-        'booking_done'         => 'Booking done',
-        'lost'                 => 'Lost',
+        'site_visit_done' => 'Site visit done',
+        'in_discussion' => 'In discussion',
+        'booking_done' => 'Booking done',
+        'lost' => 'Lost',
     ],
 
     'terminal_stages' => ['booking_done', 'lost'],
@@ -27,19 +27,19 @@ return [
      */
     'project_types' => [
         'residential' => 'Residential',
-        'commercial'  => 'Commercial',
+        'commercial' => 'Commercial',
     ],
 
     'stage_colors' => [
-        'fresh'                => '#8A94A0',
-        'connected'            => '#2F6FB0',
-        'not_connected'        => '#C2711A',
-        'details_shared'       => '#5B58B8',
+        'fresh' => '#8A94A0',
+        'connected' => '#2F6FB0',
+        'not_connected' => '#C2711A',
+        'details_shared' => '#5B58B8',
         'site_visit_scheduled' => '#8145A8',
-        'site_visit_done'      => '#0F766E',
-        'in_discussion'        => '#B4881B',
-        'booking_done'         => '#1E7A45',
-        'lost'                 => '#B23A38',
+        'site_visit_done' => '#0F766E',
+        'in_discussion' => '#B4881B',
+        'booking_done' => '#1E7A45',
+        'lost' => '#B23A38',
     ],
 
     /*
@@ -83,14 +83,14 @@ return [
     ],
 
     'sources' => [
-        'walk_in'       => 'Walk-in',
+        'walk_in' => 'Walk-in',
         'incoming_call' => 'Incoming call',
-        'referral'      => 'Referral',
-        'facebook'      => 'Facebook',
-        'instagram'     => 'Instagram',
-        'whatsapp'      => 'WhatsApp',
-        'broker'        => 'Broker',
-        'hoarding'      => 'Hoarding',
+        'referral' => 'Referral',
+        'facebook' => 'Facebook',
+        'instagram' => 'Instagram',
+        'whatsapp' => 'WhatsApp',
+        'broker' => 'Broker',
+        'hoarding' => 'Hoarding',
     ],
 
     /*
@@ -104,22 +104,22 @@ return [
      | than that: a broker's parent must be a firm, and a firm has no parent.
      */
     'channel_partner_types' => [
-        'firm'   => 'Firm',
+        'firm' => 'Firm',
         'broker' => 'Broker',
     ],
 
     'lost_reasons' => [
-        'budget'      => 'Budget',
-        'location'    => 'Location',
-        'competitor'  => 'Chose competitor',
+        'budget' => 'Budget',
+        'location' => 'Location',
+        'competitor' => 'Chose competitor',
         'not_serious' => 'Not serious',
         'no_response' => 'No response',
     ],
 
     'todo_types' => [
-        'call'       => 'Call',
-        'whatsapp'   => 'WhatsApp',
-        'meeting'    => 'Meeting',
+        'call' => 'Call',
+        'whatsapp' => 'WhatsApp',
+        'meeting' => 'Meeting',
         'site_visit' => 'Site visit',
     ],
 
@@ -161,8 +161,8 @@ return [
      | spells these out.
      */
     'role_labels' => [
-        'admin'       => 'Admin',
-        'telecaller'  => 'Telecaller',
+        'admin' => 'Admin',
+        'telecaller' => 'Telecaller',
         'salesperson' => 'Sales',
     ],
 
@@ -181,8 +181,8 @@ return [
      | every table still reads the one above.
      */
     'role_words' => [
-        'admin'       => 'Admin',
-        'telecaller'  => 'Telecaller',
+        'admin' => 'Admin',
+        'telecaller' => 'Telecaller',
         'salesperson' => 'Salesperson',
     ],
 
@@ -207,49 +207,49 @@ return [
      | the safe direction to fail in.
      */
     'permissions' => [
-        'add_leads'     => [
+        'add_leads' => [
             'label' => 'Can add leads',
-            'hint'  => 'Create new leads from the Leads page.',
+            'hint' => 'Create new leads from the Leads page.',
         ],
-        'edit_leads'    => [
+        'edit_leads' => [
             'label' => 'Can edit leads',
-            'hint'  => 'Change a lead they can already see.',
+            'hint' => 'Change a lead they can already see.',
         ],
-        'delete_leads'  => [
+        'delete_leads' => [
             'label' => 'Can delete leads',
-            'hint'  => 'Soft delete a lead. Off for everyone by default.',
+            'hint' => 'Soft delete a lead. Off for everyone by default.',
         ],
         'see_all_leads' => [
             'label' => 'Can see all leads',
-            'hint'  => 'Sees every lead like an admin, not only their own. For a sales manager.',
+            'hint' => 'Sees every lead like an admin, not only their own. For a sales manager.',
         ],
-        'export_data'   => [
+        'export_data' => [
             'label' => 'Can export data',
-            'hint'  => 'Reserved — nothing reads this yet.',
+            'hint' => 'Reserved — nothing reads this yet.',
         ],
     ],
 
     'permission_defaults' => [
         'admin' => [
-            'add_leads'     => true,
-            'edit_leads'    => true,
-            'delete_leads'  => true,
+            'add_leads' => true,
+            'edit_leads' => true,
+            'delete_leads' => true,
             'see_all_leads' => true,
-            'export_data'   => true,
+            'export_data' => true,
         ],
         'salesperson' => [
-            'add_leads'     => true,
-            'edit_leads'    => true,
-            'delete_leads'  => false,
+            'add_leads' => true,
+            'edit_leads' => true,
+            'delete_leads' => false,
             'see_all_leads' => false,
-            'export_data'   => false,
+            'export_data' => false,
         ],
         'telecaller' => [
-            'add_leads'     => false,
-            'edit_leads'    => false,
-            'delete_leads'  => false,
+            'add_leads' => false,
+            'edit_leads' => false,
+            'delete_leads' => false,
             'see_all_leads' => false,
-            'export_data'   => false,
+            'export_data' => false,
         ],
     ],
 
@@ -266,11 +266,37 @@ return [
     'handover_stage' => 'site_visit_scheduled',
 
     /*
+     | Which desk a new lead lands on, by the stage it is saved at — never by
+     | who typed it in. A walk-in added after the site visit has nothing for a
+     | telecaller to call about, whoever adds it.
+     |
+     | Only the calling stages are listed; every other open stage takes the
+     | default below, and a terminal stage takes nobody — it stays with
+     | whoever added it, because no follow-up work remains.
+     |
+     | SEED VALUES, not the live mapping. The migration that added
+     | `lead_stages.owner_role` copied these into the table, and from then on
+     | the admin edits the mapping on the Stages screen — which warns, without
+     | refusing, when a stage past the handover is put on the telecaller desk.
+     | CrmTaxonomy reads these only when the table cannot answer, and
+     | LeadStage fills a new open stage from the default.
+     |
+     | LeadAssignmentService is the one thing that turns this into a person.
+     */
+    'stage_owner_roles' => [
+        'fresh' => 'telecaller',
+        'not_connected' => 'telecaller',
+    ],
+
+    'stage_owner_role_default' => 'salesperson',
+
+    /*
      | The stages a telecaller does not work: the handover stage and everything
-     | past it. Only the user management screen reads this, to warn an admin
-     | who is about to demote a salesperson still holding leads at these stages
-     | — those leads do not move on their own, and the person left holding them
-     | would no longer be doing that job.
+     | past it. The user management screen reads this, to warn an admin who is
+     | about to demote a salesperson still holding leads at these stages —
+     | those leads do not move on their own, and the person left holding them
+     | would no longer be doing that job. LeadAssignmentService falls back to
+     | it only when there is no handover stage to measure positions from.
      */
     'advanced_stages' => [
         'site_visit_scheduled',
@@ -326,9 +352,9 @@ return [
          | it reaches a query.
          */
         'lead_dimensions' => [
-            'stage'       => ['label' => 'Stage',       'column' => 'stage'],
-            'source'      => ['label' => 'Source',      'column' => 'source'],
-            'project'     => ['label' => 'Project',     'column' => 'project_id'],
+            'stage' => ['label' => 'Stage',       'column' => 'stage'],
+            'source' => ['label' => 'Source',      'column' => 'source'],
+            'project' => ['label' => 'Project',     'column' => 'project_id'],
             /*
              | The point of the channel-partner feature: which broker actually
              | brings business.
@@ -357,7 +383,7 @@ return [
         ],
 
         'follow_up_dimensions' => [
-            'type'        => ['label' => 'Type',        'column' => 'type'],
+            'type' => ['label' => 'Type',        'column' => 'type'],
             'assigned_to' => ['label' => 'Assigned to', 'column' => 'assigned_to', 'admin' => true],
         ],
 
@@ -377,9 +403,9 @@ return [
          | same set of rows the report counted.
          */
         'follow_up_statuses' => [
-            'overdue'   => ['label' => 'Waiting longer', 'column' => 'scheduled_at'],
-            'today'     => ['label' => 'Due today',      'column' => 'scheduled_at'],
-            'upcoming'  => ['label' => 'Upcoming',       'column' => 'scheduled_at'],
+            'overdue' => ['label' => 'Waiting longer', 'column' => 'scheduled_at'],
+            'today' => ['label' => 'Due today',      'column' => 'scheduled_at'],
+            'upcoming' => ['label' => 'Upcoming',       'column' => 'scheduled_at'],
             'completed' => ['label' => 'Completed',      'column' => 'completed_at'],
         ],
 

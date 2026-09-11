@@ -3,7 +3,9 @@
 namespace Tests\Feature;
 
 use App\Models\Lead;
+use App\Models\Project;
 use App\Models\Todo;
+use App\Models\User;
 use Database\Seeders\DemoSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -27,6 +29,21 @@ class SeededHistoryTest extends TestCase
         parent::setUp();
 
         $this->seed(DemoSeeder::class);
+    }
+
+    /** So the per-project round robin has a team from the first lead, with no setup. */
+    public function test_both_salespeople_are_on_every_project(): void
+    {
+        $salespeople = User::where('role', 'salesperson')->pluck('id')->sort()->values()->all();
+
+        $this->assertCount(2, $salespeople);
+        $this->assertSame(3, Project::count());
+
+        Project::all()->each(fn (Project $p) => $this->assertSame(
+            $salespeople,
+            $p->salespeople()->pluck('users.id')->sort()->values()->all(),
+            $p->name,
+        ));
     }
 
     public function test_every_leads_history_runs_forwards(): void
@@ -114,7 +131,7 @@ class SeededHistoryTest extends TestCase
     public function test_a_single_booking_gives_the_card_and_the_chart_the_same_number(): void
     {
         $from = today()->startOfDay();
-        $to   = now();
+        $to = now();
 
         foreach (['booking_done', 'lost', 'site_visit_done'] as $stage) {
             $card = Todo::where('outcome_stage', $stage)

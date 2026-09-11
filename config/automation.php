@@ -41,34 +41,34 @@ return [
          */
 
         'lead_created' => [
-            'label'  => 'A new lead is added',
+            'label' => 'A new lead is added',
             'phrase' => 'When a lead is created',
-            'kind'   => 'event',
-            'hint'   => 'Runs the moment a lead is saved — typed in on the Leads page, or arriving on its own from Facebook.',
+            'kind' => 'event',
+            'hint' => 'Runs the moment a lead is saved — typed in on the Leads page, or arriving on its own from Facebook.',
             'params' => [],
         ],
 
         'stage_changed' => [
-            'label'  => 'A lead moves to a stage',
+            'label' => 'A lead moves to a stage',
             'phrase' => 'When a lead moves to {stage}',
-            'kind'   => 'event',
-            'hint'   => 'Runs when somebody moves a lead INTO the stage you pick — not while it sits there.',
+            'kind' => 'event',
+            'hint' => 'Runs when somebody moves a lead INTO the stage you pick — not while it sits there.',
             'params' => [
                 'stage' => [
-                    'label'    => 'Which stage',
-                    'type'     => 'select',
-                    'options'  => 'stages',
+                    'label' => 'Which stage',
+                    'type' => 'select',
+                    'options' => 'stages',
                     'required' => true,
-                    'hint'     => 'The stage the lead arrives at.',
+                    'hint' => 'The stage the lead arrives at.',
                 ],
             ],
         ],
 
         'lead_assigned' => [
-            'label'  => 'A lead is given to someone',
+            'label' => 'A lead is given to someone',
             'phrase' => 'When a lead is assigned to somebody',
-            'kind'   => 'event',
-            'hint'   => 'Runs when a lead changes hands — including the automatic handover to a salesperson when a site visit is booked.',
+            'kind' => 'event',
+            'hint' => 'Runs when a lead changes hands — including the automatic handover to a salesperson when a site visit is booked.',
             'params' => [],
         ],
 
@@ -79,46 +79,46 @@ return [
          */
 
         'follow_up_overdue' => [
-            'label'  => 'A follow-up is overdue',
+            'label' => 'A follow-up is overdue',
             'phrase' => 'When a follow-up is more than {days} overdue',
-            'kind'   => 'time',
-            'hint'   => 'Checked every hour. Counts from the date the follow-up was due, not from when the lead was added.',
+            'kind' => 'time',
+            'hint' => 'Checked every hour. Counts from the date the follow-up was due, not from when the lead was added.',
             'params' => [
                 'days' => [
-                    'label'    => 'Overdue by how many days',
-                    'type'     => 'number',
-                    'min'      => 1,
-                    'max'      => 90,
-                    'default'  => 3,
+                    'label' => 'Overdue by how many days',
+                    'type' => 'number',
+                    'min' => 1,
+                    'max' => 90,
+                    'default' => 3,
                     'required' => true,
-                    'unit'     => 'days',
-                    'hint'     => 'A follow-up one hour late is not a problem. Three days late is.',
+                    'unit' => 'days',
+                    'hint' => 'A follow-up one hour late is not a problem. Three days late is.',
                 ],
             ],
         ],
 
         'stage_idle' => [
-            'label'  => 'A lead sits in a stage too long',
+            'label' => 'A lead sits in a stage too long',
             'phrase' => 'When a lead has been sitting at {stage} for {days}',
-            'kind'   => 'time',
-            'hint'   => 'Checked every hour. This is about a lead that has stopped moving, whether or not anybody is calling it.',
+            'kind' => 'time',
+            'hint' => 'Checked every hour. This is about a lead that has stopped moving, whether or not anybody is calling it.',
             'params' => [
                 'stage' => [
-                    'label'    => 'Which stage',
-                    'type'     => 'select',
-                    'options'  => 'stages',
+                    'label' => 'Which stage',
+                    'type' => 'select',
+                    'options' => 'stages',
                     'required' => true,
-                    'hint'     => 'The stage the lead is stuck in.',
+                    'hint' => 'The stage the lead is stuck in.',
                 ],
                 'days' => [
-                    'label'    => 'For how many days',
-                    'type'     => 'number',
-                    'min'      => 1,
-                    'max'      => 365,
-                    'default'  => 7,
+                    'label' => 'For how many days',
+                    'type' => 'number',
+                    'min' => 1,
+                    'max' => 365,
+                    'default' => 7,
                     'required' => true,
-                    'unit'     => 'days',
-                    'hint'     => 'Counted from the day it entered that stage.',
+                    'unit' => 'days',
+                    'hint' => 'Counted from the day it entered that stage.',
                 ],
             ],
         ],
@@ -143,33 +143,33 @@ return [
     'conditions' => [
 
         'source' => [
-            'label'   => 'Source',
-            'phrase'  => 'the source is {value}',
-            'column'  => 'source',
+            'label' => 'Source',
+            'phrase' => 'the source is {value}',
+            'column' => 'source',
             'options' => 'sources',
-            'hint'    => 'Where the lead came from — the same list as the Source box on the lead form.',
+            'hint' => 'Where the lead came from — the same list as the Source box on the lead form.',
         ],
 
         'project' => [
-            'label'   => 'Project',
-            'phrase'  => 'the project is {value}',
-            'column'  => 'project_id',
+            'label' => 'Project',
+            'phrase' => 'the project is {value}',
+            'column' => 'project_id',
             'options' => 'projects',
-            'hint'    => 'Only leads enquiring about this project.',
+            'hint' => 'Only leads enquiring about this project.',
         ],
 
         'stage' => [
-            'label'   => 'Stage',
-            'phrase'  => 'the stage is {value}',
-            'column'  => 'stage',
+            'label' => 'Stage',
+            'phrase' => 'the stage is {value}',
+            'column' => 'stage',
             'options' => 'stages',
-            'hint'    => 'Where the lead is right now, at the moment the rule runs.',
+            'hint' => 'Where the lead is right now, at the moment the rule runs.',
         ],
 
         'assigned_role' => [
-            'label'   => 'Assigned to a',
-            'phrase'  => 'it is assigned to a {value}',
-            'column'  => 'assigned_role',
+            'label' => 'Assigned to a',
+            'phrase' => 'it is assigned to a {value}',
+            'column' => 'assigned_role',
             'options' => 'roles',
             /*
              | Lowercased in the preview sentence. "Telecaller" is a label on a
@@ -178,8 +178,8 @@ return [
              | project names keep their capitals, which is why this is a flag
              | rather than a rule applied to everything.
              */
-            'lower'   => true,
-            'hint'    => 'Whether the lead is currently with a telecaller or a salesperson.',
+            'lower' => true,
+            'hint' => 'Whether the lead is currently with a telecaller or a salesperson.',
         ],
     ],
 
@@ -207,65 +207,65 @@ return [
     'actions' => [
 
         'assign_user' => [
-            'label'  => 'Give it to one person',
+            'label' => 'Give it to one person',
             'phrase' => 'give it to {user_id}',
-            'hint'   => 'Always the same person. Use this when one desk owns a source outright.',
+            'hint' => 'Always the same person. Use this when one desk owns a source outright.',
             'params' => [
                 'user_id' => [
-                    'label'    => 'Who',
-                    'type'     => 'select',
-                    'options'  => 'users',
+                    'label' => 'Who',
+                    'type' => 'select',
+                    'options' => 'users',
                     'required' => true,
-                    'hint'     => 'Only active staff are listed. A rule pointing at somebody who leaves is skipped and logged, not silently dropped.',
+                    'hint' => 'Only active staff are listed. A rule pointing at somebody who leaves is skipped and logged, not silently dropped.',
                 ],
             ],
         ],
 
         'assign_round_robin' => [
-            'label'  => 'Share it out among a role',
+            'label' => 'Share it out among a role',
             'phrase' => 'assign it round-robin to a {role}',
-            'hint'   => 'Takes it in turns across everybody active in that role, so nobody gets two in a row.',
+            'hint' => 'Takes it in turns across everybody active in that role, so nobody gets two in a row. Salespeople take turns within the lead\'s project, among the people ticked on its page.',
             'params' => [
                 'role' => [
-                    'label'    => 'Which desk',
-                    'type'     => 'select',
-                    'options'  => 'roles',
+                    'label' => 'Which desk',
+                    'type' => 'select',
+                    'options' => 'roles',
                     'required' => true,
-                    'lower'    => true,
-                    'hint'     => 'Telecallers do the first call; salespeople take over at the site visit.',
+                    'lower' => true,
+                    'hint' => 'Telecallers do the first call; salespeople take over at the site visit.',
                 ],
             ],
         ],
 
         'change_stage' => [
-            'label'  => 'Move it to another stage',
+            'label' => 'Move it to another stage',
             'phrase' => 'move it to {stage}',
-            'hint'   => 'Changes the stage exactly as a person would, and is recorded in the lead history as done by automation.',
+            'hint' => 'Changes the stage exactly as a person would, and is recorded in the lead history as done by automation.',
             'params' => [
                 'stage' => [
-                    'label'    => 'Move to',
-                    'type'     => 'select',
-                    'options'  => 'stages',
+                    'label' => 'Move to',
+                    'type' => 'select',
+                    'options' => 'stages',
                     'required' => true,
-                    'hint'     => 'Careful: a rule that moves a stage can set off another rule that watches for that move.',
+                    'hint' => 'Careful: a rule that moves a stage can set off another rule that watches for that move.',
                 ],
             ],
         ],
 
         'create_follow_up' => [
-            'label'  => 'Create a follow-up',
+            'label' => 'Create a follow-up',
             'phrase' => 'create a {todo_type} follow-up in {hours}',
-            'hint'   => 'Puts a task on the assigned person\'s Follow-ups page. If the lead already has one pending, that one is replaced.',
+            'hint' => 'Puts a task on the assigned person\'s Follow-ups page. If the lead already has one pending, that one is replaced.',
             'params' => [
                 'hours' => [
-                    'label'    => 'In how many hours',
-                    'type'     => 'number',
-                    'min'      => 1,
-                    'max'      => 720,
-                    'default'  => 24,
+                    'label' => 'In how many hours',
+                    'type' => 'number',
+                    'min' => 1,
+                    'max' => 720,
+                    'default' => 24,
                     'required' => true,
-                    'unit'     => 'hours',
-                    'hint'     => 'Counted from the moment the rule runs. 1 for "right away", 24 for "tomorrow".',
+                    'unit' => 'hours',
+                    'hint' => 'Counted from the moment the rule runs. 1 for "right away", 24 for "tomorrow".',
                 ],
                 /*
                  | `todo_type`, not `type`. Every action in a stored rule is
@@ -275,87 +275,87 @@ return [
                  | Nothing would throw; the rule would simply stop existing.
                  */
                 'todo_type' => [
-                    'label'    => 'What kind',
-                    'type'     => 'select',
-                    'options'  => 'todo_types',
-                    'default'  => 'call',
+                    'label' => 'What kind',
+                    'type' => 'select',
+                    'options' => 'todo_types',
+                    'default' => 'call',
                     'required' => true,
-                    'lower'    => true,
-                    'hint'     => 'The same list as the Follow-up box on the lead form.',
+                    'lower' => true,
+                    'hint' => 'The same list as the Follow-up box on the lead form.',
                 ],
                 'remarks' => [
-                    'label'    => 'Note on the task',
-                    'type'     => 'text',
+                    'label' => 'Note on the task',
+                    'type' => 'text',
                     'required' => false,
-                    'hint'     => 'What the person should do. Shown on their Follow-ups page.',
+                    'hint' => 'What the person should do. Shown on their Follow-ups page.',
                 ],
             ],
         ],
 
         'raise_alert' => [
-            'label'  => 'Raise an alert',
+            'label' => 'Raise an alert',
             'phrase' => 'alert {recipient}',
-            'hint'   => 'A message under the bell. It is not a task — reading it does not change the lead.',
+            'hint' => 'A message under the bell. It is not a task — reading it does not change the lead.',
             'params' => [
                 'recipient' => [
-                    'label'    => 'Who should know',
-                    'type'     => 'select',
-                    'options'  => 'alert_recipients',
-                    'default'  => 'lead_owner',
+                    'label' => 'Who should know',
+                    'type' => 'select',
+                    'options' => 'alert_recipients',
+                    'default' => 'lead_owner',
                     'required' => true,
-                    'hint'     => 'Nobody is ever alerted about a lead they are not allowed to see — those are skipped quietly.',
+                    'hint' => 'Nobody is ever alerted about a lead they are not allowed to see — those are skipped quietly.',
                 ],
                 'recipient_role' => [
-                    'label'    => 'Which role',
-                    'type'     => 'select',
-                    'options'  => 'roles',
+                    'label' => 'Which role',
+                    'type' => 'select',
+                    'options' => 'roles',
                     'required' => true,
-                    'lower'    => true,
-                    'when'     => ['recipient' => 'role'],
-                    'hint'     => 'Everybody active in this role gets it.',
+                    'lower' => true,
+                    'when' => ['recipient' => 'role'],
+                    'hint' => 'Everybody active in this role gets it.',
                 ],
                 'recipient_user_id' => [
-                    'label'    => 'Which person',
-                    'type'     => 'select',
-                    'options'  => 'users',
+                    'label' => 'Which person',
+                    'type' => 'select',
+                    'options' => 'users',
                     'required' => true,
-                    'when'     => ['recipient' => 'user'],
-                    'hint'     => 'One named person.',
+                    'when' => ['recipient' => 'user'],
+                    'hint' => 'One named person.',
                 ],
                 'severity' => [
-                    'label'    => 'How loud',
-                    'type'     => 'select',
-                    'options'  => 'severities',
-                    'default'  => 'info',
+                    'label' => 'How loud',
+                    'type' => 'select',
+                    'options' => 'severities',
+                    'default' => 'info',
                     'required' => true,
-                    'hint'     => 'Colour only. It does not change who gets it or when.',
+                    'hint' => 'Colour only. It does not change who gets it or when.',
                 ],
                 'title' => [
-                    'label'    => 'Alert headline',
-                    'type'     => 'text',
+                    'label' => 'Alert headline',
+                    'type' => 'text',
                     'required' => true,
-                    'hint'     => 'One line. You can use {lead_name} and {project} here.',
+                    'hint' => 'One line. You can use {lead_name} and {project} here.',
                 ],
                 'body' => [
-                    'label'    => 'More detail',
-                    'type'     => 'textarea',
+                    'label' => 'More detail',
+                    'type' => 'textarea',
                     'required' => false,
-                    'hint'     => 'Optional second line, shown when the alert is opened.',
+                    'hint' => 'Optional second line, shown when the alert is opened.',
                 ],
             ],
         ],
 
         'queue_whatsapp' => [
-            'label'  => 'Queue a WhatsApp message',
+            'label' => 'Queue a WhatsApp message',
             'phrase' => 'queue the {template_id} WhatsApp message',
-            'hint'   => 'Puts the message in the Queue tab for somebody to open and send. It is never sent on its own.',
+            'hint' => 'Puts the message in the Queue tab for somebody to open and send. It is never sent on its own.',
             'params' => [
                 'template_id' => [
-                    'label'    => 'Which message',
-                    'type'     => 'select',
-                    'options'  => 'templates',
+                    'label' => 'Which message',
+                    'type' => 'select',
+                    'options' => 'templates',
                     'required' => true,
-                    'hint'     => 'Written on the Templates tab. The lead\'s name and project are filled in when the message is queued.',
+                    'hint' => 'Written on the Templates tab. The lead\'s name and project are filled in when the message is queued.',
                 ],
             ],
         ],
@@ -374,15 +374,15 @@ return [
 
     'alert_recipients' => [
         'lead_owner' => ['label' => 'The person the lead is assigned to', 'phrase' => 'whoever the lead belongs to'],
-        'admins'     => ['label' => 'All admins',                          'phrase' => 'all admins'],
-        'role'       => ['label' => 'Everybody in a role',                 'phrase' => 'every {recipient_role}'],
-        'user'       => ['label' => 'One named person',                    'phrase' => '{recipient_user_id}'],
+        'admins' => ['label' => 'All admins',                          'phrase' => 'all admins'],
+        'role' => ['label' => 'Everybody in a role',                 'phrase' => 'every {recipient_role}'],
+        'user' => ['label' => 'One named person',                    'phrase' => '{recipient_user_id}'],
     ],
 
     'severities' => [
-        'info'    => ['label' => 'Information', 'hint' => 'Worth knowing. Grey.'],
+        'info' => ['label' => 'Information', 'hint' => 'Worth knowing. Grey.'],
         'warning' => ['label' => 'Warning',     'hint' => 'Somebody should look. Amber.'],
-        'urgent'  => ['label' => 'Urgent',      'hint' => 'Deal with it today. Red.'],
+        'urgent' => ['label' => 'Urgent',      'hint' => 'Deal with it today. Red.'],
     ],
 
     /*
@@ -416,7 +416,7 @@ return [
 
     'loop_protection' => [
         'max_touches_per_chain' => 3,
-        'cooldown_minutes'      => 60,
+        'cooldown_minutes' => 60,
 
         /*
          | Time triggers get a longer one, and it is not a contradiction of the
@@ -458,19 +458,19 @@ return [
          */
         'categories' => [
             'utility' => [
-                'label'     => 'Utility',
+                'label' => 'Utility',
                 'cost_note' => 'Cheapest — roughly an eighth of the price of a marketing message.',
-                'hint'      => 'A message about something the customer already started: a booking, a visit they asked for, a brochure they requested.',
+                'hint' => 'A message about something the customer already started: a booking, a visit they asked for, a brochure they requested.',
             ],
             'marketing' => [
-                'label'     => 'Marketing',
+                'label' => 'Marketing',
                 'cost_note' => 'Most expensive — around eight times a utility message.',
-                'hint'      => 'Offers, launches, festive greetings. Anything the customer did not ask for.',
+                'hint' => 'Offers, launches, festive greetings. Anything the customer did not ask for.',
             ],
             'authentication' => [
-                'label'     => 'Authentication',
+                'label' => 'Authentication',
                 'cost_note' => 'Priced like utility, but only for one-time passcodes.',
-                'hint'      => 'One-time passcodes only. Not used by this CRM — listed because Meta will ask.',
+                'hint' => 'One-time passcodes only. Not used by this CRM — listed because Meta will ask.',
             ],
         ],
 
@@ -481,12 +481,12 @@ return [
          | number, not left to find out after fifty messages have gone out.
          */
         'placeholders' => [
-            'lead_name'   => ['label' => "The customer's full name", 'example' => 'Rahul Mehta'],
-            'first_name'  => ['label' => 'Just their first name',    'example' => 'Rahul'],
-            'project'     => ['label' => 'The project they asked about', 'example' => 'Skyline Residency'],
-            'owner_name'  => ['label' => 'Your staff member handling them', 'example' => 'Priya Shah'],
+            'lead_name' => ['label' => "The customer's full name", 'example' => 'Rahul Mehta'],
+            'first_name' => ['label' => 'Just their first name',    'example' => 'Rahul'],
+            'project' => ['label' => 'The project they asked about', 'example' => 'Skyline Residency'],
+            'owner_name' => ['label' => 'Your staff member handling them', 'example' => 'Priya Shah'],
             'owner_phone' => ['label' => "That staff member's mobile", 'example' => '+91 98200 00002'],
-            'stage'       => ['label' => 'Where the lead has reached', 'example' => 'Site visit done'],
+            'stage' => ['label' => 'Where the lead has reached', 'example' => 'Site visit done'],
         ],
 
         // wa.me is the click-to-chat host. It takes the number as bare digits
@@ -510,10 +510,10 @@ return [
          | rendered to the browser — see MessageTemplateController and
          | Integration::maskedSetting().
          */
-        'provider'    => 'whatsapp',
+        'provider' => 'whatsapp',
         'secret_keys' => ['access_token'],
-        'api'         => [
-            'base'    => env('WHATSAPP_API_BASE', 'https://graph.facebook.com'),
+        'api' => [
+            'base' => env('WHATSAPP_API_BASE', 'https://graph.facebook.com'),
             'version' => env('WHATSAPP_API_VERSION', 'v21.0'),
             'timeout' => 15,
         ],
@@ -531,6 +531,6 @@ return [
      | The Activity tab shows this many rows, and the Queue this many messages.
      | Both are "the recent past", not an archive — the tables keep everything.
      */
-    'log_limit'   => 100,
+    'log_limit' => 100,
     'queue_limit' => 100,
 ];

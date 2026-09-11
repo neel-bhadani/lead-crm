@@ -234,6 +234,22 @@ const deleteMessage = computed(() => deleting.value
 
 /** Why a row's Delete is greyed out, or '' when it is not. */
 const lockReason = row => row.cannot_delete ?? ''
+
+/* ---------------- routing ---------------- */
+
+/*
+ | Who a lead added at this stage goes to. Terminal stages route to nobody new —
+ | the lead stays with whoever added it.
+ */
+const deskLabel = row => (row.owner_role ? (props.options.roles[row.owner_role] ?? row.owner_role) : 'Whoever adds it')
+
+/*
+ | Marked for as long as it stays set, not only in the toast when it was saved:
+ | a stage past the site visit on the telecaller desk is allowed, but somebody
+ | opening this screen next month should still be able to see it.
+ */
+const misrouted = row => row.past_handover && row.owner_role === 'telecaller'
+const misroutedTitle = 'Past the site visit, but new leads here go to a telecaller — they have no reason to call, and no salesperson sees the lead.'
 </script>
 
 <template>
@@ -267,6 +283,7 @@ const lockReason = row => row.cannot_delete ?? ''
         <template v-if="isStages">
           Drag a row, or use the arrows, to change the order. That order is the order of
           every dropdown, every chart axis and the funnel.
+          A new lead goes to the desk its stage names, whoever adds it.
           Switching a stage off hides it from the dropdowns — leads already in it keep it,
           and every past report still counts them.
         </template>
@@ -282,6 +299,7 @@ const lockReason = row => row.cannot_delete ?? ''
             <th class="w-10 px-2 py-2.5"></th>
             <th class="px-4 py-2.5 font-semibold">{{ isStages ? 'Stage' : 'Source' }}</th>
             <th class="px-4 py-2.5 font-semibold">Key</th>
+            <th v-if="isStages" class="px-4 py-2.5 font-semibold">New leads go to</th>
             <th v-if="!isStages" class="px-4 py-2.5 font-semibold">Default stage</th>
             <th v-if="!isStages" class="px-4 py-2.5 font-semibold">Default owner</th>
             <th class="px-4 py-2.5 font-semibold">Leads</th>
@@ -342,6 +360,15 @@ const lockReason = row => row.cannot_delete ?? ''
 
             <td class="px-4 py-3 font-mono text-xs text-slate-400">{{ row.key }}</td>
 
+            <td v-if="isStages" class="px-4 py-3">
+              <span :class="row.owner_role ? 'text-slate-700' : 'text-slate-400'">{{ deskLabel(row) }}</span>
+              <span v-if="misrouted(row)"
+                    class="ml-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800"
+                    :title="misroutedTitle">
+                Past the site visit
+              </span>
+            </td>
+
             <td v-if="!isStages" class="px-4 py-3 text-slate-500">{{ row.default_stage ?? '—' }}</td>
             <td v-if="!isStages" class="px-4 py-3 text-slate-500">
               {{ row.default_owner_role ? (options.roles[row.default_owner_role] ?? row.default_owner_role) : '—' }}
@@ -389,6 +416,12 @@ const lockReason = row => row.cannot_delete ?? ''
                 {{ row.leads }} {{ row.leads === 1 ? 'lead' : 'leads' }}
                 <template v-if="row.is_system"> · Built in</template>
                 <template v-if="isStages && row.is_terminal"> · Ends the journey</template>
+              </div>
+              <div v-if="isStages" class="mt-1 text-xs text-slate-500">
+                New leads: {{ deskLabel(row) }}
+                <span v-if="misrouted(row)" class="font-medium text-amber-800" :title="misroutedTitle">
+                  · past the site visit
+                </span>
               </div>
             </div>
 

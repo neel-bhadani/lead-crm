@@ -2,10 +2,13 @@
 
 namespace Database\Seeders;
 
-use App\Models\{User, Project, Lead, Todo, ChannelPartner};
-use Illuminate\Database\Seeder;
-use Illuminate\Support\Carbon;
+use App\Models\ChannelPartner;
+use App\Models\Lead;
+use App\Models\Project;
+use App\Models\Todo;
+use App\Models\User;
 use App\Support\CrmTaxonomy;
+use Illuminate\Database\Seeder;
 
 class DemoSeeder extends Seeder
 {
@@ -30,7 +33,7 @@ class DemoSeeder extends Seeder
         $sales = collect([
             ['Amit', 'Patel', 'sales@crm.test', '9820000003'],
             ['Nisha', 'Desai', 'sales2@crm.test', '9820000004'],
-        ])->map(fn($s) => User::create([
+        ])->map(fn ($s) => User::create([
             'first_name' => $s[0],
             'last_name' => $s[1],
             'email' => $s[2],
@@ -42,11 +45,15 @@ class DemoSeeder extends Seeder
             ['Skyline Residency', 'Vesu, Surat'],
             ['Green Court', 'Pal, Surat'],
             ['Orion Business Hub', 'Adajan, Surat'],
-        ])->map(fn($p) => Project::create([
+        ])->map(fn ($p) => Project::create([
             'name' => $p[0],
             'location' => $p[1],
             'created_by' => $admin->id,
         ]));
+        // both salespeople on every project, so the per-project round robin
+        // has a team to take turns among from the first lead — without this
+        // every salesperson lead would fall back and alert the admin
+        $projects->each(fn (Project $p) => $p->salespeople()->attach($sales->pluck('id')));
         /*
          | Channel partners, covering all three cases the model has to hold: a
          | firm a lead can come through directly, brokers filed under that firm,
@@ -61,12 +68,12 @@ class DemoSeeder extends Seeder
             ['Shreeji Realty', 'Nita Shah'],
             ['Anand Properties', 'Bhavin Rana'],
         ])->map(fn ($f) => ChannelPartner::create([
-            'name'           => $f[0],
-            'type'           => 'firm',
+            'name' => $f[0],
+            'type' => 'firm',
             'contact_person' => $f[1],
-            'phone'          => '9' . rand(100000000, 999999999),
-            'email'          => strtolower(str_replace(' ', '', $f[0])) . '@example.com',
-            'address'        => 'Ring Road, Surat',
+            'phone' => '9'.rand(100000000, 999999999),
+            'email' => strtolower(str_replace(' ', '', $f[0])).'@example.com',
+            'address' => 'Ring Road, Surat',
         ]));
 
         $brokers = collect([
@@ -77,10 +84,10 @@ class DemoSeeder extends Seeder
             ['Kiran Modi', null],
             ['Hetal Solanki', null],
         ])->map(fn ($b) => ChannelPartner::create([
-            'name'      => $b[0],
-            'type'      => 'broker',
+            'name' => $b[0],
+            'type' => 'broker',
             'parent_id' => $b[1],
-            'phone'     => '9' . rand(100000000, 999999999),
+            'phone' => '9'.rand(100000000, 999999999),
         ]));
 
         // every row a lead may be attributed to — a firm directly, or a broker
@@ -117,8 +124,8 @@ class DemoSeeder extends Seeder
             $lead = Lead::create([
                 'first_name' => $first[array_rand($first)],
                 'last_name' => $last[array_rand($last)],
-                'mobile_number' => '9' . rand(100000000, 999999999),
-                'email' => 'lead' . $i . '@example.com',
+                'mobile_number' => '9'.rand(100000000, 999999999),
+                'email' => 'lead'.$i.'@example.com',
                 'project_id' => $projects->random()->id,
                 'source' => $source,
                 /*
@@ -143,7 +150,7 @@ class DemoSeeder extends Seeder
                 'assigned_role' => $owner->role,
                 'created_by' => $admin->id,
                 'reason' => $stage === 'lost' ? 'budget' : null,
-                'booked_unit' => $stage === 'booking_done' ? 'A-' . rand(101, 904) : null,
+                'booked_unit' => $stage === 'booking_done' ? 'A-'.rand(101, 904) : null,
                 'created_at' => $created,
                 'updated_at' => $created,
             ]);
@@ -158,7 +165,7 @@ class DemoSeeder extends Seeder
              | order the newest one is not the last stage the lead reached, and
              | leads.stage looks like it disagrees with its own history.
              */
-            $steps  = max(1, count($path) - 1);
+            $steps = max(1, count($path) - 1);
             $window = max($steps, (int) $created->diffInMinutes(now()));
             $stamps = [];
 
@@ -169,7 +176,9 @@ class DemoSeeder extends Seeder
             $cursor = $created->copy();
             $notConnected = 0;
             foreach ($path as $idx => $st) {
-                if ($idx === 0) continue;
+                if ($idx === 0) {
+                    continue;
+                }
                 $cursor = $stamps[$idx - 1];
                 $notConnected = $st === 'not_connected' ? $notConnected + 1 : 0;
                 Todo::create([

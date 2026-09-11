@@ -10,12 +10,13 @@ use App\Models\Lead;
 use App\Models\Todo;
 use App\Models\User;
 use App\Services\LeadFollowUpService;
+use App\Support\CrmTaxonomy;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
-use App\Support\CrmTaxonomy;
 
 class TodoController extends Controller
 {
@@ -31,9 +32,9 @@ class TodoController extends Controller
 
     public function index(Request $request)
     {
-        $user    = $request->user();
+        $user = $request->user();
         $filters = $this->filters($request);
-        $tab     = $filters['tab'];
+        $tab = $filters['tab'];
 
         [$from, $to] = $this->dateWindow($filters);
 
@@ -57,7 +58,7 @@ class TodoController extends Controller
          | The date window is inside applyTab() rather than out here, because
          | which rows it may narrow is a property of the tab — see that method.
          */
-        $base = fn() => $this->applyTab(
+        $base = fn () => $this->applyTab(
             Todo::forUser($user)
                 // a deleted lead takes its rows off this page with it
                 ->hasLead()
@@ -68,14 +69,14 @@ class TodoController extends Controller
                             ->orWhere('mobile_number', 'like', "%$s%");
                     });
                 })
-                ->when($filters['assigned_to'] ?? null, fn($q, $v) => $q->where('assigned_to', $v)),
+                ->when($filters['assigned_to'] ?? null, fn ($q, $v) => $q->where('assigned_to', $v)),
             $tab,
             $from,
             $to
         );
 
         $rows = $base()
-            ->when($filters['type'] ?? null, fn($q, $v) => $q->where('type', $v))
+            ->when($filters['type'] ?? null, fn ($q, $v) => $q->where('type', $v))
             ->with([
                 /*
                  | stage_changed_at and created_at are not shown here, but the
@@ -106,8 +107,8 @@ class TodoController extends Controller
         return Inertia::render('Todos/Index', [
             // no withQueryString(): the filters are in the session now, so a
             // page link carries nothing but its page number
-            'todos'   => $rows->paginate(15),
-            'tab'     => $tab,
+            'todos' => $rows->paginate(15),
+            'tab' => $tab,
             /*
              | The tab badges, and they are deliberately not the chips. They
              | answer "how much is in each list" and take no filter at all, so
@@ -115,41 +116,44 @@ class TodoController extends Controller
              | is the number of completed tasks, not the number of completed
              | calls.
              */
-            'counts'  => $this->counts($user),
-            'types'   => $this->typeCounts($base),
+            'counts' => $this->counts($user),
+            'types' => $this->typeCounts($base),
             'filters' => $this->withRangeWord($filters),
             'options' => [
                 // every stage for the labels on the history rows, the
                 // active keys for the stage dropdown in CompleteTaskModal
-                'stages'       => CrmTaxonomy::allStages(),
+                'stages' => CrmTaxonomy::allStages(),
                 'activeStages' => CrmTaxonomy::activeStageKeys(),
-                'stageColors'  => CrmTaxonomy::stageColors(),
-                'types'       => config('crm.todo_types'),
+                'stageColors' => CrmTaxonomy::stageColors(),
+                'types' => config('crm.todo_types'),
                 // today in IST. The date inputs use this as their max rather
                 // than the browser clock, which may be in another timezone.
-                'today'       => today()->toDateString(),
-                'reasons'     => config('crm.lost_reasons'),
+                'today' => today()->toDateString(),
+                'reasons' => config('crm.lost_reasons'),
                 // CompleteTaskModal asks for the next follow-up on every call
                 // that leaves the lead open; these two say which those are, and
                 // which stage forces the next task to be the site visit
                 'terminalStages' => CrmTaxonomy::terminalStages(),
-                'handoverStage'  => CrmTaxonomy::handoverStage(),
+                'handoverStage' => CrmTaxonomy::handoverStage(),
+                // and the desk it hands leads to, so the clash warning knows
+                // when the next task is about to change hands
+                'handoverRole' => CrmTaxonomy::ownerRoleFor(CrmTaxonomy::handoverStage()),
                 // CallButtons builds its tel: and wa.me hrefs from this
                 'countryCode' => config('crm.country_code'),
-                'roleLabels'  => config('crm.role_labels'),
+                'roleLabels' => config('crm.role_labels'),
                 /*
                  | assigned_to rides along so TodoFormModal can ask whether the
                  | person this lead belongs to is already busy at the time being
                  | picked. It is not a control: TodoController::store() takes the
                  | owner from the lead itself and never from the form.
                  */
-                'openLeads'   => Lead::visibleTo($user)->open()
+                'openLeads' => Lead::visibleTo($user)->open()
                     ->doesntHave('pendingTodo')
                     ->get(['id', 'first_name', 'last_name', 'mobile_number', 'assigned_to']),
-                'users'       => $user->isAdmin()
+                'users' => $user->isAdmin()
                     ? User::whereIn('role', ['telecaller', 'salesperson'])
-                    ->approved()
-                    ->get(['id', 'first_name', 'last_name'])
+                        ->approved()
+                        ->get(['id', 'first_name', 'last_name'])
                     : [],
             ],
         ]);
@@ -167,13 +171,13 @@ class TodoController extends Controller
             $request,
             'todos',
             [
-                'tab'         => ['sometimes', 'string', 'in:overdue,today,upcoming,completed'],
-                'search'      => ['sometimes', 'string', 'max:100'],
-                'type'        => ['sometimes', 'string', Rule::in(array_keys(config('crm.todo_types')))],
+                'tab' => ['sometimes', 'string', 'in:overdue,today,upcoming,completed'],
+                'search' => ['sometimes', 'string', 'max:100'],
+                'type' => ['sometimes', 'string', Rule::in(array_keys(config('crm.todo_types')))],
                 'assigned_to' => ['sometimes', 'integer', 'min:1'],
             ] + $this->dateRangeRules(),
             ['tab' => self::DEFAULT_TAB],
-            fn(array $state) => $this->sanitiseDates($state),
+            fn (array $state) => $this->sanitiseDates($state),
         );
     }
 
@@ -207,11 +211,11 @@ class TodoController extends Controller
     private function applyTab($query, string $tab, ?Carbon $from = null, ?Carbon $to = null)
     {
         return match ($tab) {
-            'overdue'   => $query->overdue(),
-            'upcoming'  => $query->upcoming(),
+            'overdue' => $query->overdue(),
+            'upcoming' => $query->upcoming(),
             'completed' => $query->where('status', 'completed')
-                ->when($from, fn($q) => $q->whereBetween('completed_at', [$from, $to])),
-            default     => $query->dueToday(),
+                ->when($from, fn ($q) => $q->whereBetween('completed_at', [$from, $to])),
+            default => $query->dueToday(),
         };
     }
 
@@ -226,7 +230,7 @@ class TodoController extends Controller
      * "All" chip, and "All" disagreeing with the four beside it is the one
      * failure this feature cannot survive.
      *
-     * @param  callable(): \Illuminate\Database\Eloquent\Builder  $base
+     * @param  callable(): Builder  $base
      * @return array{total: int, bars: list<array{key: string, label: string, value: int}>}
      */
     private function typeCounts(callable $base): array
@@ -237,8 +241,8 @@ class TodoController extends Controller
             ->pluck('total', 'type');
 
         $bars = collect(config('crm.todo_types'))
-            ->map(fn($label, $key) => [
-                'key'   => $key,
+            ->map(fn ($label, $key) => [
+                'key' => $key,
                 'label' => $label,
                 'value' => (int) ($counts[$key] ?? 0),
             ])->values()->all();
@@ -297,12 +301,12 @@ class TodoController extends Controller
     public function checkConflict(Request $request)
     {
         $data = $request->validate([
-            'assigned_to'     => ['required', 'integer', 'exists:users,id'],
-            'scheduled_at'    => ['required', 'date'],
+            'assigned_to' => ['required', 'integer', 'exists:users,id'],
+            'scheduled_at' => ['required', 'date'],
             'exclude_todo_id' => ['nullable', 'integer'],
         ]);
 
-        $at      = Carbon::parse($data['scheduled_at']);
+        $at = Carbon::parse($data['scheduled_at']);
         $minutes = (int) config('crm.follow_up_clash_minutes');
 
         /*
@@ -351,7 +355,7 @@ class TodoController extends Controller
 
         return response()->json(['conflict' => [
             'message' => $this->clashSentence($request->user(), $nearest, $total - 1),
-            'count'   => $total,
+            'count' => $total,
         ]]);
     }
 
@@ -373,8 +377,8 @@ class TodoController extends Controller
     private function clashSentence(User $user, Todo $todo, int $others): string
     {
         $person = $todo->owner?->display_name ?? 'This user';
-        $type   = $this->typeWord($todo->type);
-        $time   = $todo->scheduled_at->format('g:i A');
+        $type = $this->typeWord($todo->type);
+        $time = $todo->scheduled_at->format('g:i A');
 
         $sentence = $user->can('view', $todo->lead)
             ? "{$person} already has {$type} with {$todo->lead->full_name} at {$time}"
@@ -384,7 +388,7 @@ class TodoController extends Controller
             $sentence .= $others === 1 ? ', and 1 other' : ", and {$others} others";
         }
 
-        return $sentence . '.';
+        return $sentence.'.';
     }
 
     /**
@@ -402,7 +406,7 @@ class TodoController extends Controller
 
         $word = preg_match('/\p{Lu}.*\p{Lu}/u', $label) ? $label : Str::lower($label);
 
-        return (in_array(Str::lower($word[0] ?? ''), ['a', 'e', 'i', 'o', 'u'], true) ? 'an ' : 'a ') . $word;
+        return (in_array(Str::lower($word[0] ?? ''), ['a', 'e', 'i', 'o', 'u'], true) ? 'an ' : 'a ').$word;
     }
 
     public function store(TodoRequest $request)
@@ -415,13 +419,13 @@ class TodoController extends Controller
         );
 
         Todo::create([
-            'lead_id'      => $lead->id,
-            'assigned_to'  => $lead->assigned_to,
-            'created_by'   => $request->user()->id,
+            'lead_id' => $lead->id,
+            'assigned_to' => $lead->assigned_to,
+            'created_by' => $request->user()->id,
             'scheduled_at' => $request->scheduled_at,
-            'type'         => $request->type,
-            'status'       => 'pending',
-            'remarks'      => $request->remarks,
+            'type' => $request->type,
+            'status' => 'pending',
+            'remarks' => $request->remarks,
         ]);
 
         return back()->with('success', 'Follow-up added.');
@@ -455,9 +459,9 @@ class TodoController extends Controller
         // hasLead() on every one of them: a badge that counted rows the tab
         // does not render would be worse than the crash it replaced
         return [
-            'overdue'   => Todo::forUser($user)->hasLead()->overdue()->count(),
-            'today'     => Todo::forUser($user)->hasLead()->dueToday()->count(),
-            'upcoming'  => Todo::forUser($user)->hasLead()->upcoming()->count(),
+            'overdue' => Todo::forUser($user)->hasLead()->overdue()->count(),
+            'today' => Todo::forUser($user)->hasLead()->dueToday()->count(),
+            'upcoming' => Todo::forUser($user)->hasLead()->upcoming()->count(),
             'completed' => Todo::forUser($user)->hasLead()->where('status', 'completed')->count(),
         ];
     }

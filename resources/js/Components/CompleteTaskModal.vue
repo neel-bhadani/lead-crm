@@ -57,14 +57,15 @@ const visitPreset = computed(() => form.stage === props.options.handoverStage)
 /*
  | The handover, and the one case this modal must not warn about.
  |
- | Moving a lead to "Site visit scheduled" hands it from the telecaller to a
- | salesperson, and which salesperson is decided by a round robin that does not
- | run until the form is saved. The follow-up being booked here lands on that
- | person, not on the one holding the lead now — so a warning would name the
- | wrong diary. Nothing is shown rather than something wrong.
+ | Moving a lead to "Site visit scheduled" hands it to that stage's desk
+ | (`handoverRole`) whenever its owner is on another, and which salesperson is
+ | decided by a round robin that does not run until the form is saved. The
+ | follow-up being booked here lands on that person, not on the one holding the
+ | lead now — so a warning would name the wrong diary. Nothing is shown rather
+ | than something wrong.
  */
 const handsOver = computed(() =>
-  visitPreset.value && props.todo?.lead?.assigned_role === 'telecaller')
+  visitPreset.value && props.todo?.lead?.assigned_role !== props.options.handoverRole)
 
 /*
  | Otherwise the next follow-up lands on whoever owns the lead, and the task

@@ -6,8 +6,10 @@ use App\Http\Requests\LeadSourceRequest;
 use App\Http\Requests\LeadStageRequest;
 use App\Models\LeadSource;
 use App\Models\LeadStage;
+use App\Services\LeadAssignmentService;
 use App\Support\CrmTaxonomy;
 use App\Support\TaxonomyReferences;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -49,6 +51,8 @@ use Inertia\Inertia;
  */
 class PipelineController extends Controller
 {
+    public function __construct(private LeadAssignmentService $assignment) {}
+
     /* ====================================================================
      | The page
      ==================================================================== */
@@ -60,14 +64,14 @@ class PipelineController extends Controller
                 ? $request->query('tab')
                 : 'stages',
 
-            'stages'  => $this->stageRows(),
+            'stages' => $this->stageRows(),
             'sources' => $this->sourceRows(),
 
             'options' => [
-                'palette'      => config('crm.stage_palette'),
+                'palette' => config('crm.stage_palette'),
                 // the source form's "default stage" picker offers live stages only
                 'activeStages' => CrmTaxonomy::stages(),
-                'roles'        => collect(config('crm.staff_roles'))
+                'roles' => collect(config('crm.staff_roles'))
                     ->mapWithKeys(fn (string $r) => [$r => config("crm.role_words.$r", $r)])
                     ->all(),
                 /*
@@ -93,22 +97,31 @@ class PipelineController extends Controller
      */
     private function stageRows(): array
     {
-        return LeadStage::ordered()->get()->map(function (LeadStage $stage) {
+        $pastHandover = $this->assignment->stagesPastHandover();
+
+        return LeadStage::ordered()->get()->map(function (LeadStage $stage) use ($pastHandover) {
             $refs = TaxonomyReferences::forStage($stage->key);
 
             return [
-                'id'          => $stage->id,
-                'key'         => $stage->key,
-                'label'       => $stage->label,
-                'color'       => $stage->color,
-                'sort_order'  => $stage->sort_order,
+                'id' => $stage->id,
+                'key' => $stage->key,
+                'label' => $stage->label,
+                'color' => $stage->color,
+                'sort_order' => $stage->sort_order,
                 'is_terminal' => $stage->is_terminal,
-                'is_system'   => $stage->is_system,
-                'is_active'   => $stage->is_active,
+                'is_system' => $stage->is_system,
+                'is_active' => $stage->is_active,
                 'is_handover' => $stage->key === CrmTaxonomy::handoverStage(),
-                'leads'       => $refs['leads'],
-                'history'     => $refs['history'],
-                'rules'       => $refs['rules'],
+                /*
+                 | The desk a new lead here goes to (null: whoever adds it), and
+                 | whether this stage is past the handover — together they are
+                 | what the row's warning marker and the form's live note read.
+                 */
+                'owner_role' => $stage->owner_role,
+                'past_handover' => in_array($stage->key, $pastHandover, true),
+                'leads' => $refs['leads'],
+                'history' => $refs['history'],
+                'rules' => $refs['rules'],
                 /*
                  | Why each button is disabled, or null when it is not.
                  |
@@ -118,9 +131,9 @@ class PipelineController extends Controller
                  | and update() below refuse the same cases again, for a request
                  | that never went through this page.
                  */
-                'cannot_delete'     => $this->stageDeleteBlocker($stage, $refs),
+                'cannot_delete' => $this->stageDeleteBlocker($stage, $refs),
                 'cannot_deactivate' => $this->stageDeactivateBlocker($stage),
-                'cannot_retype'     => $this->stageTerminalBlocker($stage, $refs),
+                'cannot_retype' => $this->stageTerminalBlocker($stage, $refs),
             ];
         })->values()->all();
     }
@@ -134,21 +147,21 @@ class PipelineController extends Controller
             $refs = TaxonomyReferences::forSource($source->key);
 
             return [
-                'id'                 => $source->id,
-                'key'                => $source->key,
-                'label'              => $source->label,
-                'sort_order'         => $source->sort_order,
-                'default_stage_key'  => $source->default_stage_key,
-                'default_stage'      => $source->default_stage_key
+                'id' => $source->id,
+                'key' => $source->key,
+                'label' => $source->label,
+                'sort_order' => $source->sort_order,
+                'default_stage_key' => $source->default_stage_key,
+                'default_stage' => $source->default_stage_key
                     ? ($stages[$source->default_stage_key] ?? $source->default_stage_key)
                     : null,
                 'default_owner_role' => $source->default_owner_role,
-                'is_system'          => $source->is_system,
-                'is_active'          => $source->is_active,
-                'leads'              => $refs['leads'],
-                'rules'              => $refs['rules'],
-                'cannot_delete'      => $this->sourceDeleteBlocker($source, $refs),
-                'cannot_deactivate'  => $this->sourceDeactivateBlocker($source),
+                'is_system' => $source->is_system,
+                'is_active' => $source->is_active,
+                'leads' => $refs['leads'],
+                'rules' => $refs['rules'],
+                'cannot_delete' => $this->sourceDeleteBlocker($source, $refs),
+                'cannot_deactivate' => $this->sourceDeactivateBlocker($source),
             ];
         })->values()->all();
     }
@@ -159,16 +172,16 @@ class PipelineController extends Controller
 
     public function storeStage(LeadStageRequest $request)
     {
-        LeadStage::create($request->validated() + [
-            // slugged from the label, and locked from here on
-            'key'        => $request->slugKey(),
-            // on the end of the list: a new stage is not silently inserted in
-            // the middle of a pipeline somebody has already ordered
-            'sort_order' => (int) LeadStage::max('sort_order') + 10,
-            'is_system'  => false,
-        ]);
-
-        return back()->with('success', 'Stage added.');
+        return $this->routingChange(function () use ($request) {
+            LeadStage::create($request->validated() + [
+                // slugged from the label, and locked from here on
+                'key' => $request->slugKey(),
+                // on the end of the list: a new stage is not silently inserted
+                // in the middle of a pipeline somebody has already ordered
+                'sort_order' => (int) LeadStage::max('sort_order') + 10,
+                'is_system' => false,
+            ]);
+        }, 'Stage added.');
     }
 
     public function updateStage(LeadStageRequest $request, LeadStage $stage)
@@ -190,9 +203,7 @@ class PipelineController extends Controller
         }
 
         // `key` is not in validated() — see LeadStageRequest
-        $stage->update($data);
-
-        return back()->with('success', 'Stage saved.');
+        return $this->routingChange(fn () => $stage->update($data), 'Stage saved.');
     }
 
     /**
@@ -212,9 +223,38 @@ class PipelineController extends Controller
 
     public function reorderStages(Request $request)
     {
-        $this->applyOrder($request, LeadStage::class, 'lead_stages');
+        // the order is part of the routing: dragging a telecaller stage below
+        // the handover stage makes it an advanced stage on the telecaller desk
+        return $this->routingChange(
+            fn () => $this->applyOrder($request, LeadStage::class, 'lead_stages'),
+            'Stage order saved.',
+        );
+    }
 
-        return back()->with('success', 'Stage order saved.');
+    /**
+     * Save a change to the stages, and say so if it has just started sending
+     * leads that are past the calling stage to a telecaller.
+     *
+     * Allowed, because the mapping is the admin's to set. Never silent, because
+     * the consequence — a telecaller holding a customer who has already visited
+     * the site, and no salesperson seeing them — shows up nowhere on this
+     * screen by itself. Only a stage that NEWLY lands in that state is named:
+     * saving one that already was, for a label change, is not news. The row
+     * itself stays marked on the Stages screen for as long as it is set.
+     */
+    private function routingChange(callable $save, string $success)
+    {
+        $before = $this->assignment->telecallerStagesPastHandover();
+
+        $save();
+
+        $warning = $this->assignment->routingWarning(
+            array_diff_key($this->assignment->telecallerStagesPastHandover(), $before)
+        );
+
+        $response = back()->with('success', $success);
+
+        return $warning ? $response->with('warning', $warning) : $response;
     }
 
     /* ====================================================================
@@ -224,9 +264,9 @@ class PipelineController extends Controller
     public function storeSource(LeadSourceRequest $request)
     {
         LeadSource::create($request->validated() + [
-            'key'        => $request->slugKey(),
+            'key' => $request->slugKey(),
             'sort_order' => (int) LeadSource::max('sort_order') + 10,
-            'is_system'  => false,
+            'is_system' => false,
         ]);
 
         return back()->with('success', 'Source added.');
@@ -280,16 +320,16 @@ class PipelineController extends Controller
 
         if ($refs['leads'] > 0) {
             return $this->plural($refs['leads'], 'lead is', 'leads are')
-                . ' sitting in this stage. Switch it off instead — deleting it would leave them with no stage at all.';
+                .' sitting in this stage. Switch it off instead — deleting it would leave them with no stage at all.';
         }
 
         if ($refs['history'] > 0) {
             return $this->plural($refs['history'], 'completed follow-up records', 'completed follow-ups record')
-                . ' a move to this stage. Switch it off instead — deleting it would change what those reports say.';
+                .' a move to this stage. Switch it off instead — deleting it would change what those reports say.';
         }
 
         if ($refs['rules'] !== []) {
-            return 'Used by ' . $this->ruleList($refs['rules']) . '. Remove it from ' . (count($refs['rules']) === 1 ? 'that rule' : 'those rules') . ' first.';
+            return 'Used by '.$this->ruleList($refs['rules']).'. Remove it from '.(count($refs['rules']) === 1 ? 'that rule' : 'those rules').' first.';
         }
 
         return null;
@@ -344,7 +384,7 @@ class PipelineController extends Controller
 
         if ($refs['leads'] > 0) {
             return $this->plural($refs['leads'], 'lead is', 'leads are')
-                . ' sitting in this stage, so whether it ends the journey cannot be changed now — their follow-ups depend on the answer.';
+                .' sitting in this stage, so whether it ends the journey cannot be changed now — their follow-ups depend on the answer.';
         }
 
         return null;
@@ -361,11 +401,11 @@ class PipelineController extends Controller
 
         if ($refs['leads'] > 0) {
             return $this->plural($refs['leads'], 'lead came', 'leads came')
-                . ' from this source. Switch it off instead — deleting it would change every report that has ever counted them.';
+                .' from this source. Switch it off instead — deleting it would change every report that has ever counted them.';
         }
 
         if ($refs['rules'] !== []) {
-            return 'Used by ' . $this->ruleList($refs['rules']) . '. Remove it from ' . (count($refs['rules']) === 1 ? 'that rule' : 'those rules') . ' first.';
+            return 'Used by '.$this->ruleList($refs['rules']).'. Remove it from '.(count($refs['rules']) === 1 ? 'that rule' : 'those rules').' first.';
         }
 
         return null;
@@ -401,13 +441,13 @@ class PipelineController extends Controller
      * table — or one deleted between the page loading and the drag landing —
      * simply does not match and the rest of the order still applies.
      *
-     * @param  class-string<\Illuminate\Database\Eloquent\Model>  $model
+     * @param  class-string<Model>  $model
      */
     private function applyOrder(Request $request, string $model, string $table): void
     {
         $ids = $request->validate([
-            'order'   => ['required', 'array', 'min:1'],
-            'order.*' => ['required', 'integer', 'exists:' . $table . ',id'],
+            'order' => ['required', 'array', 'min:1'],
+            'order.*' => ['required', 'integer', 'exists:'.$table.',id'],
         ])['order'];
 
         DB::transaction(function () use ($ids, $model) {
@@ -423,15 +463,15 @@ class PipelineController extends Controller
 
     private function plural(int $n, string $one, string $many): string
     {
-        return $n . ' ' . ($n === 1 ? $one : $many);
+        return $n.' '.($n === 1 ? $one : $many);
     }
 
     /** @param  list<string>  $names */
     private function ruleList(array $names): string
     {
-        $quoted = array_map(fn (string $n) => '"' . $n . '"', array_slice($names, 0, 3));
-        $extra  = count($names) - count($quoted);
+        $quoted = array_map(fn (string $n) => '"'.$n.'"', array_slice($names, 0, 3));
+        $extra = count($names) - count($quoted);
 
-        return implode(', ', $quoted) . ($extra > 0 ? " and $extra more" : '');
+        return implode(', ', $quoted).($extra > 0 ? " and $extra more" : '');
     }
 }

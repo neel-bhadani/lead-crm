@@ -28,10 +28,10 @@ class LeadStage extends Model
     protected $guarded = [];
 
     protected $casts = [
-        'sort_order'  => 'integer',
+        'sort_order' => 'integer',
         'is_terminal' => 'boolean',
-        'is_system'   => 'boolean',
-        'is_active'   => 'boolean',
+        'is_system' => 'boolean',
+        'is_active' => 'boolean',
     ];
 
     /**
@@ -45,6 +45,25 @@ class LeadStage extends Model
      */
     protected static function booted(): void
     {
+        /*
+         | `owner_role` — the desk a new lead at this stage is given to — is
+         | settled here rather than in the controller, for the same reason the
+         | cache is busted here: every writer passes through.
+         |
+         | A terminal stage has no desk, whatever was sent: nothing is left to
+         | follow up, so the lead stays with whoever added it. An open stage
+         | always has one, and one left empty (a new stage, or a stage switched
+         | from terminal back to open) takes the seeded default — an open lead
+         | routed to nobody would be on nobody's list.
+         */
+        static::saving(function (LeadStage $stage) {
+            if ($stage->is_terminal) {
+                $stage->owner_role = null;
+            } elseif (! $stage->owner_role) {
+                $stage->owner_role = CrmTaxonomy::seededOwnerRole((string) $stage->key);
+            }
+        });
+
         static::saved(fn () => CrmTaxonomy::flush());
         static::deleted(fn () => CrmTaxonomy::flush());
     }

@@ -50,7 +50,20 @@ class LeadStageRequest extends FormRequest
             'color' => ['required', 'string', Rule::in(config('crm.stage_palette'))],
 
             'is_terminal' => ['sometimes', 'boolean'],
-            'is_active'   => ['sometimes', 'boolean'],
+            'is_active' => ['sometimes', 'boolean'],
+
+            /*
+             | Which desk a new lead at this stage goes to. A staff role and
+             | nothing else: an admin is not a desk, and a lead routed "to the
+             | admins" would be on the first admin's list by accident.
+             |
+             | Absent keeps what the row has; empty takes the seeded default;
+             | a terminal stage drops it whatever was sent — LeadStage::booted()
+             | settles the last two. Putting a stage past the
+             | handover on the telecaller desk is allowed; PipelineController
+             | saves it and says what it means.
+             */
+            'owner_role' => ['sometimes', 'nullable', 'string', Rule::in(config('crm.staff_roles'))],
         ];
     }
 
@@ -58,8 +71,9 @@ class LeadStageRequest extends FormRequest
     {
         return [
             'label.required' => 'Give the stage a name.',
-            'label.unique'   => 'A stage with that name already exists.',
-            'color.in'       => 'Choose one of the offered colours.',
+            'label.unique' => 'A stage with that name already exists.',
+            'color.in' => 'Choose one of the offered colours.',
+            'owner_role.in' => 'New leads can go to a telecaller or a salesperson.',
         ];
     }
 
@@ -76,11 +90,11 @@ class LeadStageRequest extends FormRequest
 
         // a label of nothing but punctuation still has to produce a key
         $base = $base !== '' ? $base : 'stage';
-        $key  = $base;
-        $n    = 1;
+        $key = $base;
+        $n = 1;
 
         while (LeadStage::where('key', $key)->exists()) {
-            $key = $base . '_' . (++$n);
+            $key = $base.'_'.(++$n);
         }
 
         return $key;

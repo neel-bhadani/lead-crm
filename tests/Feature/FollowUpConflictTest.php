@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\TodoController;
 use App\Models\Lead;
 use App\Models\Project;
 use App\Models\Todo;
@@ -9,6 +10,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Inertia\Testing\AssertableInertia as Assert;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -33,8 +35,8 @@ use Tests\TestCase;
  *                      time and the type, which is all they need to pick
  *                      another slot.
  *
- * @see \App\Http\Controllers\TodoController::checkConflict()
- * @see \App\Http\Controllers\TodoController::clashSentence()
+ * @see TodoController::checkConflict()
+ * @see TodoController::clashSentence()
  */
 class FollowUpConflictTest extends TestCase
 {
@@ -43,8 +45,11 @@ class FollowUpConflictTest extends TestCase
     private const URL = '/follow-ups/check-conflict';
 
     private User $admin;
+
     private User $priya;
+
     private User $sam;
+
     private Project $project;
 
     protected function setUp(): void
@@ -55,9 +60,9 @@ class FollowUpConflictTest extends TestCase
         // in the assertion as it is on the screen
         Carbon::setTestNow(Carbon::parse('2026-09-09 10:00', 'Asia/Kolkata'));
 
-        $this->admin   = $this->user('admin', 'Ann', 'Admin');
-        $this->priya   = $this->user('telecaller', 'Priya', 'Shah');
-        $this->sam     = $this->user('salesperson', 'Sam', 'Rao');
+        $this->admin = $this->user('admin', 'Ann', 'Admin');
+        $this->priya = $this->user('telecaller', 'Priya', 'Shah');
+        $this->sam = $this->user('salesperson', 'Sam', 'Rao');
         $this->project = Project::create(['name' => 'Alpha']);
     }
 
@@ -84,10 +89,10 @@ class FollowUpConflictTest extends TestCase
     /**
      * Thirty minutes either side, from config, and the boundary is inclusive.
      *
-     * @param  string  $at        the time being picked
-     * @param  bool    $expected  whether the 3:20 PM follow-up should be reported
+     * @param  string  $at  the time being picked
+     * @param  bool  $expected  whether the 3:20 PM follow-up should be reported
      */
-    #[\PHPUnit\Framework\Attributes\DataProvider('windowEdges')]
+    #[DataProvider('windowEdges')]
     public function test_the_window_is_thirty_minutes_either_side(string $at, bool $expected): void
     {
         $this->existing($this->priya, '2026-09-09 15:20');
@@ -105,9 +110,9 @@ class FollowUpConflictTest extends TestCase
             '29 minutes before' => ['2026-09-09 14:51', true],
             'exactly 30 before' => ['2026-09-09 14:50', true],
             '31 minutes before' => ['2026-09-09 14:49', false],
-            '29 minutes after'  => ['2026-09-09 15:49', true],
-            'exactly 30 after'  => ['2026-09-09 15:50', true],
-            '31 minutes after'  => ['2026-09-09 15:51', false],
+            '29 minutes after' => ['2026-09-09 15:49', true],
+            'exactly 30 after' => ['2026-09-09 15:50', true],
+            '31 minutes after' => ['2026-09-09 15:51', false],
         ];
     }
 
@@ -214,7 +219,7 @@ class FollowUpConflictTest extends TestCase
         // Priya is a telecaller: Sam's leads are not hers to see
         $this->actingAs($this->priya)
             ->postJson(self::URL, [
-                'assigned_to'  => $this->sam->id,
+                'assigned_to' => $this->sam->id,
                 'scheduled_at' => '2026-09-09 15:25',
             ])
             ->assertOk()
@@ -228,7 +233,7 @@ class FollowUpConflictTest extends TestCase
 
         $this->actingAs($this->admin)
             ->postJson(self::URL, [
-                'assigned_to'  => $this->sam->id,
+                'assigned_to' => $this->sam->id,
                 'scheduled_at' => '2026-09-09 15:25',
             ])
             ->assertJsonPath('conflict.message', 'Sam Rao already has a call with Meera Vaghela at 3:20 PM.');
@@ -243,7 +248,7 @@ class FollowUpConflictTest extends TestCase
 
         $this->actingAs($this->priya)
             ->postJson(self::URL, [
-                'assigned_to'  => $this->sam->id,
+                'assigned_to' => $this->sam->id,
                 'scheduled_at' => '2026-09-09 15:25',
             ])
             ->assertJsonPath('conflict.message', 'Sam Rao already has a call with Meera Vaghela at 3:20 PM.');
@@ -252,7 +257,7 @@ class FollowUpConflictTest extends TestCase
     public function test_a_guest_cannot_ask(): void
     {
         $this->postJson(self::URL, [
-            'assigned_to'  => $this->priya->id,
+            'assigned_to' => $this->priya->id,
             'scheduled_at' => '2026-09-09 15:25',
         ])->assertUnauthorized();
     }
@@ -267,8 +272,8 @@ class FollowUpConflictTest extends TestCase
 
         $this->actingAs($this->admin)
             ->postJson(self::URL, [
-                'assigned_to'     => $this->priya->id,
-                'scheduled_at'    => '2026-09-09 15:25',
+                'assigned_to' => $this->priya->id,
+                'scheduled_at' => '2026-09-09 15:25',
                 'exclude_todo_id' => $todo->id,
             ])
             ->assertJson(['conflict' => null]);
@@ -285,8 +290,8 @@ class FollowUpConflictTest extends TestCase
 
         $this->actingAs($this->priya)
             ->postJson(self::URL, [
-                'assigned_to'     => $todo->assigned_to,
-                'scheduled_at'    => '2026-09-10 15:40',
+                'assigned_to' => $todo->assigned_to,
+                'scheduled_at' => '2026-09-10 15:40',
                 'exclude_todo_id' => $todo->id,
             ])
             ->assertJson(['conflict' => null]);
@@ -294,8 +299,8 @@ class FollowUpConflictTest extends TestCase
         // and the reschedule itself goes through
         $this->actingAs($this->priya)
             ->put("/todos/{$todo->id}", [
-                'lead_id'      => $todo->lead_id,
-                'type'         => 'call',
+                'lead_id' => $todo->lead_id,
+                'type' => 'call',
                 'scheduled_at' => '2026-09-10 15:40',
             ])
             ->assertRedirect()
@@ -313,14 +318,14 @@ class FollowUpConflictTest extends TestCase
 
         $this->actingAs($this->admin)
             ->post('/leads', [
-                'first_name'     => 'Neel',
-                'last_name'      => 'Bhadani',
-                'mobile_number'  => '9512779297',
-                'project_id'     => $this->project->id,
-                'source'         => 'walk_in',
-                'stage'          => 'fresh',
+                'first_name' => 'Neel',
+                'last_name' => 'Bhadani',
+                'mobile_number' => '9512779297',
+                'project_id' => $this->project->id,
+                'source' => 'walk_in',
+                'stage' => 'fresh',
                 'follow_up_type' => 'call',
-                'follow_up_at'   => '2026-09-10 15:25',
+                'follow_up_at' => '2026-09-10 15:25',
             ])
             ->assertRedirect()
             ->assertSessionHasNoErrors();
@@ -339,10 +344,10 @@ class FollowUpConflictTest extends TestCase
 
         $this->actingAs($this->priya)
             ->post("/todos/{$todo->id}/complete", [
-                'remarks'        => 'Spoke to the customer.',
-                'stage'          => 'connected',
+                'remarks' => 'Spoke to the customer.',
+                'stage' => 'connected',
                 'follow_up_type' => 'call',
-                'follow_up_at'   => '2026-09-10 15:25',
+                'follow_up_at' => '2026-09-10 15:25',
             ])
             ->assertRedirect()
             ->assertSessionHasNoErrors();
@@ -363,8 +368,8 @@ class FollowUpConflictTest extends TestCase
 
         $this->actingAs($this->priya)
             ->post('/todos', [
-                'lead_id'      => $lead->id,
-                'type'         => 'call',
+                'lead_id' => $lead->id,
+                'type' => 'call',
                 'scheduled_at' => '2026-09-10 15:25',
             ])
             ->assertRedirect()
@@ -381,8 +386,8 @@ class FollowUpConflictTest extends TestCase
 
         $this->actingAs($this->priya)
             ->put("/todos/{$todo->id}", [
-                'lead_id'      => $todo->lead_id,
-                'type'         => 'call',
+                'lead_id' => $todo->lead_id,
+                'type' => 'call',
                 'scheduled_at' => '2026-09-10 15:25',
             ])
             ->assertRedirect()
@@ -395,22 +400,29 @@ class FollowUpConflictTest extends TestCase
 
     /**
      * The add-lead modal has to name the person a NEW lead would go to, and
-     * only the server knows who that is. `defaultOwnerId` is that answer, and
-     * it has to be the same one store() acts on or the warning names a
-     * stranger.
+     * only the server knows who that is. `defaultOwners` is that answer, per
+     * project and stage because both decide it, and it has to be the same one
+     * store() acts on or the warning names a stranger.
      */
     public function test_the_leads_page_ships_the_owner_a_new_lead_would_go_to(): void
     {
+        $owners = "options.defaultOwners.{$this->project->id}";
+
+        // a fresh lead goes to the telecaller whoever adds it; one past the
+        // calling stage to a salesperson; a closed one stays with the creator
         $this->actingAs($this->admin)
             ->get('/leads')
             ->assertInertia(fn (Assert $page) => $page
-                ->where('options.defaultOwnerId', $this->priya->id));
+                ->where("$owners.fresh", $this->priya->id)
+                ->where("$owners.site_visit_done", $this->sam->id)
+                ->where("$owners.booking_done", $this->admin->id));
 
-        // a salesperson keeps their own leads, so it is themselves
         $this->actingAs($this->sam)
             ->get('/leads')
             ->assertInertia(fn (Assert $page) => $page
-                ->where('options.defaultOwnerId', $this->sam->id));
+                ->where("$owners.fresh", $this->priya->id)
+                ->where("$owners.site_visit_done", $this->sam->id)
+                ->where("$owners.booking_done", $this->sam->id));
     }
 
     /**
@@ -483,7 +495,7 @@ class FollowUpConflictTest extends TestCase
     private function check(User $owner, string $at)
     {
         return $this->actingAs($this->admin)->postJson(self::URL, [
-            'assigned_to'  => $owner->id,
+            'assigned_to' => $owner->id,
             'scheduled_at' => $at,
         ]);
     }
@@ -497,12 +509,12 @@ class FollowUpConflictTest extends TestCase
         string $status = 'pending',
     ): Todo {
         return Todo::create([
-            'lead_id'      => $this->lead($lead, $owner)->id,
-            'assigned_to'  => $owner->id,
-            'created_by'   => $this->admin->id,
+            'lead_id' => $this->lead($lead, $owner)->id,
+            'assigned_to' => $owner->id,
+            'created_by' => $this->admin->id,
             'scheduled_at' => $at,
-            'type'         => $type,
-            'status'       => $status,
+            'type' => $type,
+            'status' => $status,
         ]);
     }
 
@@ -511,28 +523,28 @@ class FollowUpConflictTest extends TestCase
         [$first, $last] = explode(' ', $name, 2);
 
         return Lead::create([
-            'first_name'    => $first,
-            'last_name'     => $last,
+            'first_name' => $first,
+            'last_name' => $last,
             'mobile_number' => (string) fake()->unique()->numberBetween(9000000000, 9999999999),
-            'project_id'    => $this->project->id,
-            'source'        => 'walk_in',
-            'stage'         => 'fresh',
-            'assigned_to'   => $owner->id,
+            'project_id' => $this->project->id,
+            'source' => 'walk_in',
+            'stage' => 'fresh',
+            'assigned_to' => $owner->id,
             'assigned_role' => $owner->role,
-            'created_by'    => $this->admin->id,
+            'created_by' => $this->admin->id,
         ]);
     }
 
     private function user(string $role, string $first, string $last): User
     {
         return User::create([
-            'first_name'    => $first,
-            'last_name'     => $last,
-            'email'         => fake()->unique()->safeEmail(),
+            'first_name' => $first,
+            'last_name' => $last,
+            'email' => fake()->unique()->safeEmail(),
             'mobile_number' => (string) fake()->unique()->numberBetween(9000000000, 9999999999),
-            'role'          => $role,
-            'is_active'     => true,
-            'password'      => 'password',
+            'role' => $role,
+            'is_active' => true,
+            'password' => 'password',
         ]);
     }
 }

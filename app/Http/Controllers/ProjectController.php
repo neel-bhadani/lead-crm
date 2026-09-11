@@ -4,13 +4,16 @@ namespace App\Http\Controllers;
 
 use App\Http\Controllers\Concerns\ResolvesFilters;
 use App\Http\Requests\ProjectRequest;
+use App\Http\Requests\ProjectSalespeopleRequest;
 use App\Models\Lead;
 use App\Models\Project;
 use App\Models\Todo;
 use App\Models\User;
-use Illuminate\Http\Request;
-use Inertia\Inertia;
+use App\Services\AlertService;
 use App\Support\CrmTaxonomy;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Inertia\Inertia;
 
 /**
  * The developments this company is selling. Admin only.
@@ -56,7 +59,7 @@ class ProjectController extends Controller
     public function index(Request $request)
     {
         $filters = $this->filters($request);
-        $user    = $request->user();
+        $user = $request->user();
 
         $projects = Project::query()
             ->when($filters['search'] ?? null, fn ($q, $s) => $q->where('name', 'like', "%$s%"))
@@ -96,14 +99,14 @@ class ProjectController extends Controller
             ->orderBy('name')
             ->paginate(15)
             ->through(fn (Project $p) => [
-                'id'             => $p->id,
-                'name'           => $p->name,
-                'location'       => $p->location,
-                'type'           => $p->type,
-                'type_label'     => $p->type_label,
-                'description'    => $p->description,
-                'is_active'      => $p->is_active,
-                'leads_count'    => $p->leads_count,
+                'id' => $p->id,
+                'name' => $p->name,
+                'location' => $p->location,
+                'type' => $p->type,
+                'type_label' => $p->type_label,
+                'description' => $p->description,
+                'is_active' => $p->is_active,
+                'leads_count' => $p->leads_count,
                 'bookings_count' => $p->bookings_count,
                 /*
                  | Whether Delete is even offered, on the same count destroy()
@@ -112,13 +115,13 @@ class ProjectController extends Controller
                  | reason on it rather than failing on click. The server refuses
                  | regardless; this is the explanation, not the guarantee.
                  */
-                'deletable'      => $p->all_leads_count === 0,
+                'deletable' => $p->all_leads_count === 0,
             ]);
 
         return Inertia::render('Projects/Index', [
             'projects' => $projects,
-            'filters'  => $filters,
-            'options'  => [
+            'filters' => $filters,
+            'options' => [
                 'types' => config('crm.project_types'),
             ],
         ]);
@@ -149,25 +152,25 @@ class ProjectController extends Controller
     {
         $user = $request->user();
 
-        $total  = Lead::visibleTo($user)->where('project_id', $project->id)->count();
+        $total = Lead::visibleTo($user)->where('project_id', $project->id)->count();
         $events = $this->stageEvents($user, $project);
         $booked = $events['booking_done'];
 
         return Inertia::render('Projects/Show', [
             'project' => [
-                'id'          => $project->id,
-                'name'        => $project->name,
-                'location'    => $project->location,
-                'type'        => $project->type,
-                'type_label'  => $project->type_label,
+                'id' => $project->id,
+                'name' => $project->name,
+                'location' => $project->location,
+                'type' => $project->type,
+                'type_label' => $project->type_label,
                 'description' => $project->description,
-                'is_active'   => $project->is_active,
-                'created_at'  => $project->created_at?->toIso8601String(),
-                'creator'     => $project->creator?->display_name,
+                'is_active' => $project->is_active,
+                'created_at' => $project->created_at?->toIso8601String(),
+                'creator' => $project->creator?->display_name,
             ],
 
             'totals' => [
-                'leads'  => $total,
+                'leads' => $total,
                 'visits' => $events['site_visit_done'],
                 'booked' => $booked,
                 /*
@@ -181,15 +184,16 @@ class ProjectController extends Controller
                  | a claim that nobody bought, which is not what happened.
                  */
                 'conversion' => $total > 0 ? round($booked / $total * 100, 1) : null,
-                'lost'       => $events['lost'],
+                'lost' => $events['lost'],
             ],
 
-            'byStage'  => $this->byStage($user, $project, $total),
+            'byStage' => $this->byStage($user, $project, $total),
             'bySource' => $this->bySource($user, $project, $total),
-            'leads'    => $this->recentLeads($user, $project),
+            'leads' => $this->recentLeads($user, $project),
+            'salespeople' => $this->salespeople($project),
 
             'options' => [
-                'types'       => config('crm.project_types'),
+                'types' => config('crm.project_types'),
                 'stageColors' => CrmTaxonomy::stageColors(),
                 // how many of the leads list is shown before the drill-through
                 'leadPreview' => self::LEAD_PREVIEW,
@@ -217,8 +221,8 @@ class ProjectController extends Controller
     private function stageEvents(User $user, Project $project): array
     {
         $counts = Todo::whereHas('lead', fn ($q) => $q
-                ->visibleTo($user)
-                ->where('project_id', $project->id))
+            ->visibleTo($user)
+            ->where('project_id', $project->id))
             ->whereNotNull('outcome_stage')
             ->whereNotNull('completed_at')
             ->selectRaw('outcome_stage, count(distinct lead_id) as total')
@@ -250,7 +254,7 @@ class ProjectController extends Controller
 
         return collect(CrmTaxonomy::stageUniverse($counts->keys()))
             ->map(fn (string $label, string $key) => [
-                'key'   => $key,
+                'key' => $key,
                 'label' => $label,
                 'total' => (int) ($counts[$key] ?? 0),
                 'share' => $total > 0 ? round(((int) ($counts[$key] ?? 0)) / $total * 100, 1) : null,
@@ -275,7 +279,7 @@ class ProjectController extends Controller
             ->groupBy('source')
             ->pluck('total', 'source')
             ->map(fn ($count, $key) => [
-                'key'   => $key,
+                'key' => $key,
                 'label' => CrmTaxonomy::sourceLabel((string) $key),
                 'total' => (int) $count,
                 'share' => $total > 0 ? round(((int) $count) / $total * 100, 1) : null,
@@ -313,19 +317,83 @@ class ProjectController extends Controller
                 'stage', 'source', 'assigned_to', 'created_at', 'stage_changed_at',
             ])
             ->map(fn (Lead $lead) => [
-                'id'         => $lead->id,
-                'name'       => $lead->full_name,
-                'mobile'     => $lead->mobile_number,
-                'stage'      => $lead->stage,
+                'id' => $lead->id,
+                'name' => $lead->full_name,
+                'mobile' => $lead->mobile_number,
+                'stage' => $lead->stage,
                 'stageLabel' => CrmTaxonomy::stageLabel($lead->stage),
-                'source'     => CrmTaxonomy::sourceLabel($lead->source),
-                'owner'      => $lead->owner?->display_name,
+                'source' => CrmTaxonomy::sourceLabel($lead->source),
+                'owner' => $lead->owner?->display_name,
                 'created_at' => $lead->created_at?->toIso8601String(),
             ])
             ->all();
     }
 
+    /**
+     * Every active salesperson, and whether they are ticked for this project.
+     *
+     * Only the active ones, because only they can take a turn. Somebody
+     * switched off keeps their pivot row — see updateSalespeople() — and simply
+     * is not listed until they are switched back on.
+     *
+     * @return list<array{id: int, name: string, assigned: bool}>
+     */
+    private function salespeople(Project $project): array
+    {
+        $assigned = $project->salespeople()->pluck('users.id')->all();
+
+        return User::active()
+            ->where('role', 'salesperson')
+            ->orderBy('first_name')
+            ->orderBy('last_name')
+            // no 'name': the column was dropped for first_name/last_name, and
+            // SQLite would quietly select the string literal where MySQL throws
+            ->get(['id', 'first_name', 'last_name'])
+            ->map(fn (User $u) => [
+                'id' => $u->id,
+                'name' => $u->display_name,
+                'assigned' => in_array($u->id, $assigned, true),
+            ])
+            ->all();
+    }
+
     /* ---------------- writes ---------------- */
+
+    /**
+     * Save who handles this project — the people its salesperson round robin
+     * takes turns among. See LeadAssignmentService.
+     *
+     * Not a plain sync(). The page lists active salespeople only, so a sync
+     * would detach everybody it does not list: a salesperson switched off for
+     * a fortnight would come back to find every project they handle had
+     * forgotten them the first time an admin saved one. Only the people the
+     * page actually showed unticked are removed.
+     *
+     * Ticking somebody answers the "no salesperson is assigned" alert, so it is
+     * cleared from every admin's bell the way an answered sign-up is.
+     */
+    public function updateSalespeople(ProjectSalespeopleRequest $request, Project $project, AlertService $alerts)
+    {
+        $ticked = collect($request->validated('salesperson_ids'))->map(fn ($id) => (int) $id);
+        $unticked = User::active()->where('role', 'salesperson')->pluck('id')->diff($ticked);
+
+        DB::transaction(function () use ($project, $ticked, $unticked) {
+            if ($unticked->isNotEmpty()) {
+                $project->salespeople()->detach($unticked->all());
+            }
+
+            $project->salespeople()->syncWithoutDetaching($ticked->all());
+        });
+
+        if ($ticked->isEmpty()) {
+            return back()->with('warning', "Nobody is assigned to \"{$project->name}\" now. Its leads that need a "
+                .'salesperson will go to any active salesperson, and admins will be alerted when that happens.');
+        }
+
+        $alerts->resolve('project_without_salespeople.'.$project->id);
+
+        return back()->with('success', "Salespeople for \"{$project->name}\" saved.");
+    }
 
     public function store(ProjectRequest $request)
     {
@@ -354,7 +422,7 @@ class ProjectController extends Controller
             return back()
                 ->with('success', 'Project updated.')
                 ->with('warning', "\"{$project->name}\" is now inactive. It has been removed from the "
-                    . 'Add lead form; its existing leads and history are unchanged.');
+                    .'Add lead form; its existing leads and history are unchanged.');
         }
 
         return back()->with('success', 'Project updated.');
@@ -385,10 +453,10 @@ class ProjectController extends Controller
 
         if ($leads > 0) {
             return back()->with('error',
-                "\"{$project->name}\" has {$leads} lead" . ($leads === 1 ? '' : 's')
-                . ' filed against it and cannot be deleted — deleting it would take those leads '
-                . 'and their entire follow-up history with it. Switch the project off instead: '
-                . 'that removes it from the Add lead form and keeps all of the history.');
+                "\"{$project->name}\" has {$leads} lead".($leads === 1 ? '' : 's')
+                .' filed against it and cannot be deleted — deleting it would take those leads '
+                .'and their entire follow-up history with it. Switch the project off instead: '
+                .'that removes it from the Add lead form and keeps all of the history.');
         }
 
         $name = $project->name;

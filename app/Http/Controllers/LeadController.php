@@ -9,7 +9,10 @@ use App\Models\ChannelPartner;
 use App\Models\Lead;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\LeadAssignmentService;
 use App\Services\LeadFollowUpService;
+use App\Support\CrmTaxonomy;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
@@ -18,7 +21,6 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
-use App\Support\CrmTaxonomy;
 
 class LeadController extends Controller
 {
@@ -27,11 +29,14 @@ class LeadController extends Controller
     /** The three fields that book a follow-up; they are not lead columns. */
     private const FOLLOW_UP_FIELDS = ['follow_up_type', 'follow_up_at', 'follow_up_remarks'];
 
-    public function __construct(private LeadFollowUpService $service) {}
+    public function __construct(
+        private LeadFollowUpService $service,
+        private LeadAssignmentService $assignment,
+    ) {}
 
     public function index(Request $request)
     {
-        $user    = $request->user();
+        $user = $request->user();
         $filters = $this->filters($request);
 
         [$from, $to] = $this->dateWindow($filters);
@@ -53,7 +58,7 @@ class LeadController extends Controller
          | counting a telecaller's leads; the model's soft-delete scope comes
          | along for the same ride.
          */
-        $base = fn() => Lead::visibleTo($user)
+        $base = fn () => Lead::visibleTo($user)
             ->when($filters['search'] ?? null, function ($q, $s) {
                 $q->where(function ($w) use ($s) {
                     $w->where('first_name', 'like', "%$s%")
@@ -62,17 +67,17 @@ class LeadController extends Controller
                         ->orWhere('email', 'like', "%$s%");
                 });
             })
-            ->when($filters['project_id'] ?? null, fn($q, $v) => $q->where('project_id', $v))
-            ->when($filters['source'] ?? null, fn($q, $v) => $q->where('source', $v))
+            ->when($filters['project_id'] ?? null, fn ($q, $v) => $q->where('project_id', $v))
+            ->when($filters['source'] ?? null, fn ($q, $v) => $q->where('source', $v))
             // where the leads report's "By channel partner" rows drill through to
-            ->when($filters['channel_partner_id'] ?? null, fn($q, $v) => $q->where('channel_partner_id', $v))
-            ->when($filters['assigned_to'] ?? null, fn($q, $v) => $q->where('assigned_to', $v))
+            ->when($filters['channel_partner_id'] ?? null, fn ($q, $v) => $q->where('channel_partner_id', $v))
+            ->when($filters['assigned_to'] ?? null, fn ($q, $v) => $q->where('assigned_to', $v))
             // one clause, both bounds, on real datetimes rather than DATE() —
             // see dateWindow() for why the boundaries are built where they are
-            ->when($from, fn($q) => $q->whereBetween('created_at', [$from, $to]));
+            ->when($from, fn ($q) => $q->whereBetween('created_at', [$from, $to]));
 
         $leads = $base()
-            ->when($filters['stage'] ?? null, fn($q, $v) => $q->where('stage', $v))
+            ->when($filters['stage'] ?? null, fn ($q, $v) => $q->where('stage', $v))
             // eager load or a 25-row page fires 50 extra queries
             ->with([
                 'project:id,name',
@@ -98,10 +103,10 @@ class LeadController extends Controller
             ->paginate(15);
 
         return Inertia::render('Leads/Index', [
-            'leads'       => $leads,
+            'leads' => $leads,
             'stageCounts' => $this->stageCounts($base),
-            'filters'     => $this->withRangeWord($filters),
-            'options'     => $this->options($user),
+            'filters' => $this->withRangeWord($filters),
+            'options' => $this->options($user),
         ]);
     }
 
@@ -117,7 +122,7 @@ class LeadController extends Controller
      * "All" chip, and "All" disagreeing with the nine beside it is the one
      * failure this feature cannot survive.
      *
-     * @param  callable(): \Illuminate\Database\Eloquent\Builder  $base
+     * @param  callable(): Builder  $base
      * @return array{total: int, bars: list<array{key: string, label: string, value: int}>}
      */
     private function stageCounts(callable $base): array
@@ -130,8 +135,8 @@ class LeadController extends Controller
         // active stages in the admin's order, plus any retired one leads are
         // still standing in — the total under these chips is summed from them
         $bars = collect(CrmTaxonomy::stageUniverse($counts->keys()))
-            ->map(fn($label, $key) => [
-                'key'   => $key,
+            ->map(fn ($label, $key) => [
+                'key' => $key,
                 'label' => $label,
                 'value' => (int) ($counts[$key] ?? 0),
             ])->values()->all();
@@ -150,27 +155,24 @@ class LeadController extends Controller
             $request,
             'leads',
             [
-                'search'      => ['sometimes', 'string', 'max:100'],
+                'search' => ['sometimes', 'string', 'max:100'],
                 // every key, not only the active ones: filtering a list is
                 // reading, and a lead filed under a retired stage is still a
                 // lead somebody may want to narrow to
-                'stage'       => ['sometimes', 'string', Rule::in(CrmTaxonomy::stageKeys())],
-                'project_id'  => ['sometimes', 'integer', 'min:1'],
-                'source'      => ['sometimes', 'string', Rule::in(CrmTaxonomy::sourceKeys())],
+                'stage' => ['sometimes', 'string', Rule::in(CrmTaxonomy::stageKeys())],
+                'project_id' => ['sometimes', 'integer', 'min:1'],
+                'source' => ['sometimes', 'string', Rule::in(CrmTaxonomy::sourceKeys())],
                 'channel_partner_id' => ['sometimes', 'integer', 'min:1'],
                 'assigned_to' => ['sometimes', 'integer', 'min:1'],
             ] + $this->dateRangeRules(),
             [],
-            fn(array $state) => $this->sanitiseDates($state),
+            fn (array $state) => $this->sanitiseDates($state),
         );
     }
 
     public function store(LeadRequest $request)
     {
         $user = $request->user();
-
-        // never take assigned_to from the form
-        $owner = $this->ownerFor($user);
 
         /*
          | Both writes or neither. onLeadCreated() gives the lead the first
@@ -180,13 +182,35 @@ class LeadController extends Controller
          | application would notice.
          */
         try {
-            DB::transaction(function () use ($request, $user, $owner) {
+            DB::transaction(function () use ($request, $user) {
+                /*
+                 | Routed by the stage and project being saved, not by who is
+                 | saving it — see LeadAssignmentService, which the handover
+                 | asks as well. Never taken from the form: LeadRequest has no
+                 | `assigned_to` rule, so a posted one is not in validated() and
+                 | cannot reach the row.
+                 |
+                 | Inside the transaction, so the project's round robin turn is
+                 | taken under its lock and an insert that fails below gives
+                 | the turn back.
+                 |
+                 | Never null here: the creator is the fallback when a desk is
+                 | empty.
+                 */
+                $owner = $this->assignment->ownerFor(
+                    $request->input('stage'),
+                    $user,
+                    (int) $request->input('project_id'),
+                );
+
                 // the follow-up fields ride in on the same form and are not
                 // columns on the lead; they are the to-do about to be created
                 $lead = Lead::create($this->leadAttributes($request) + [
-                    'assigned_to'      => $owner,
-                    'assigned_role'    => $user->isAdmin() ? 'telecaller' : $user->role,
-                    'created_by'       => $user->id,
+                    'assigned_to' => $owner->id,
+                    // the role of the person it landed on — not the role the
+                    // stage asked for, and not the creator's
+                    'assigned_role' => $owner->role,
+                    'created_by' => $user->id,
                     'stage_changed_at' => now(),
                     'last_activity_at' => now(),
                 ]);
@@ -232,7 +256,7 @@ class LeadController extends Controller
         // LeadRequest::authorize() already ran LeadPolicy::update() on this
         // same bound lead, so there is nothing left to check here
 
-        $data  = $this->leadAttributes($request);
+        $data = $this->leadAttributes($request);
         $stage = $data['stage'];
         unset($data['stage']);
 
@@ -252,7 +276,7 @@ class LeadController extends Controller
                     $lead,
                     $stage,
                     [
-                        'reason'      => $request->input('reason'),
+                        'reason' => $request->input('reason'),
                         'booked_unit' => $request->input('booked_unit'),
                     ],
                     $this->followUpAt($request),
@@ -344,7 +368,7 @@ class LeadController extends Controller
     {
         $request->validate([
             'mobile_number' => ['required', 'digits:10'],
-            'project_id'    => ['required', 'exists:projects,id'],
+            'project_id' => ['required', 'exists:projects,id'],
         ]);
 
         // withTrashed(), because the index counts deleted rows and so does the
@@ -353,7 +377,7 @@ class LeadController extends Controller
         $lead = Lead::withTrashed()
             ->where('mobile_number', $request->mobile_number)
             ->where('project_id', $request->project_id)
-            ->when($request->lead_id, fn($q, $id) => $q->where('id', '!=', $id))
+            ->when($request->lead_id, fn ($q, $id) => $q->where('id', '!=', $id))
             ->with('owner:id,first_name,last_name')
             ->first();
 
@@ -363,7 +387,7 @@ class LeadController extends Controller
 
         if ($lead->trashed()) {
             return response()->json([
-                'exists'  => true,
+                'exists' => true,
                 'message' => 'This number belongs to a deleted lead on this project. Restore that lead instead of adding it again.',
             ]);
         }
@@ -374,34 +398,11 @@ class LeadController extends Controller
         $canSee = $user->can('view', $lead);
 
         return response()->json([
-            'exists'  => true,
+            'exists' => true,
             'message' => $canSee
                 ? "Already exists for this project — {$lead->full_name}, owned by {$lead->owner?->display_name}."
                 : 'This number already exists for this project. Please contact the admin.',
         ]);
-    }
-
-    /**
-     * Who a lead added right now would belong to.
-     *
-     * An admin files leads onto the telecaller who takes them; everybody else
-     * keeps their own. The fallback matters in a young database and in a small
-     * office: with no active telecaller the lead stays with the admin rather
-     * than landing on nobody, because `todos.assigned_to` is NOT NULL and a
-     * lead with no owner is a lead on no list.
-     *
-     * A method rather than the expression inline, because two things ask the
-     * question now — store(), which acts on the answer, and options(), which
-     * ships it to the add-lead form so the clash warning can name the right
-     * person. Those two disagreeing would put a stranger's name in the warning.
-     */
-    private function ownerFor(User $user): int
-    {
-        $owner = $user->isAdmin()
-            ? User::where('role', 'telecaller')->where('is_active', true)->value('id')
-            : $user->id;
-
-        return (int) ($owner ?? $user->id);
     }
 
     private function options($user): array
@@ -413,26 +414,33 @@ class LeadController extends Controller
               | on the form filters by the second, keeping whichever stage the
               | lead is already in even when that one has been switched off.
               */
-             'stages'       => CrmTaxonomy::allStages(),
-             'activeStages' => CrmTaxonomy::activeStageKeys(),
+            'stages' => CrmTaxonomy::allStages(),
+            'activeStages' => CrmTaxonomy::activeStageKeys(),
             /*
-             | Who a NEW lead would be assigned to, for the follow-up clash
-             | warning on the add-lead form and for nothing else.
+             | Who a NEW lead would be assigned to, stage by stage, for the
+             | follow-up clash warning on the add-lead form and for nothing
+             | else. By stage because the owner depends on the stage picked.
              |
-             | Read-only and advisory. store() calls ownerFor() itself and takes
-             | no owner from the request, so a tampered value changes a sentence
-             | on screen and cannot change a single row. An existing lead is not
-             | covered by this — the form reads that one's own assigned_to.
+             | Per project as well, because a salesperson is chosen from the
+             | project's own team: project id => stage => user id, for the
+             | same active projects the form's dropdown offers.
+             |
+             | Read-only and advisory. It is LeadAssignmentService's answer
+             | without taking a turn from the round robin; store() asks the
+             | same service again and takes no owner from the request, so a
+             | tampered value changes a sentence on screen and cannot change a
+             | single row. An existing lead is not covered by this — the form
+             | reads that one's own assigned_to.
              */
-            'defaultOwnerId' => $this->ownerFor($user),
+            'defaultOwners' => $this->assignment->preview($user, Project::active()->pluck('id')),
             'stageColors' => CrmTaxonomy::stageColors(),
             // today in IST. The date inputs use this as their max rather than
             // the browser clock, which may be in another timezone entirely.
-            'today'       => today()->toDateString(),
-            'sources'       => CrmTaxonomy::allSources(),
+            'today' => today()->toDateString(),
+            'sources' => CrmTaxonomy::allSources(),
             'activeSources' => CrmTaxonomy::activeSourceKeys(),
-            'reasons'     => config('crm.lost_reasons'),
-            'projects'    => Project::active()->get(['id', 'name']),
+            'reasons' => config('crm.lost_reasons'),
+            'projects' => Project::active()->get(['id', 'name']),
             /*
              | The picker that replaced the free-text broker field.
              |
@@ -457,14 +465,14 @@ class LeadController extends Controller
                 ->orderBy('name')
                 ->get(['id', 'name', 'type', 'parent_id'])
                 ->map(fn (ChannelPartner $p) => [
-                    'id'    => $p->id,
+                    'id' => $p->id,
                     // the raw name as well as the joined label: the near-match
                     // warning compares names, and similarity-keying
                     // "Ravi Kumar — Shreeji Realty" would fold the firm into
                     // the broker's own name and never match a bare "Ravi Kumar"
-                    'name'  => $p->name,
+                    'name' => $p->name,
                     'label' => $p->display_label,
-                    'type'  => $p->type,
+                    'type' => $p->type,
                 ]),
 
             /*
@@ -484,20 +492,23 @@ class LeadController extends Controller
                 ->orderBy('name')
                 ->get(['id', 'name'])
                 ->map(fn (ChannelPartner $f) => ['id' => $f->id, 'name' => $f->name]),
-            'roleLabels'  => config('crm.role_labels'),
+            'roleLabels' => config('crm.role_labels'),
             // the follow-up the form now books itself: what kind of task it is,
             // and which stages end the chain instead of continuing it
-            'types'          => config('crm.todo_types'),
+            'types' => config('crm.todo_types'),
             'terminalStages' => CrmTaxonomy::terminalStages(),
-            'handoverStage'  => CrmTaxonomy::handoverStage(),
+            'handoverStage' => CrmTaxonomy::handoverStage(),
+            // the desk that stage hands leads to: a lead held by anyone else
+            // changes hands when it gets there
+            'handoverRole' => CrmTaxonomy::ownerRoleFor(CrmTaxonomy::handoverStage()),
             // the Assigned-to filter only means anything to someone who can
             // see past their own rows
-            'users'       => $user->can_('see_all_leads')
+            'users' => $user->can_('see_all_leads')
                 ? User::whereIn('role', ['telecaller', 'salesperson'])
                 // switched-off staff stay, their leads are still here; a
                 // sign-up nobody approved never held one
-                ->approved()
-                ->get(['id', 'first_name', 'last_name'])
+                    ->approved()
+                    ->get(['id', 'first_name', 'last_name'])
                 : [],
             /*
              | What this user may do, resolved server-side. The page shows or
@@ -505,9 +516,9 @@ class LeadController extends Controller
              | so a telecaller granted `add_leads` gets the button — and the
              | policy is still what actually decides on the way back in.
              */
-            'can'         => [
-                'add'    => $user->can_('add_leads'),
-                'edit'   => $user->can_('edit_leads'),
+            'can' => [
+                'add' => $user->can_('add_leads'),
+                'edit' => $user->can_('edit_leads'),
                 'delete' => $user->can_('delete_leads'),
             ],
         ];

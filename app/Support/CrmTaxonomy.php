@@ -61,7 +61,9 @@ use Throwable;
  */
 class CrmTaxonomy
 {
-    private const CACHE_KEY = 'crm.taxonomy.v1';
+    // v2: stage rows carry `owner_role`. A new key, so a cache warmed before
+    // the column existed is never read back as "no stage has a desk"
+    private const CACHE_KEY = 'crm.taxonomy.v2';
 
     /** @var array{stages: array<int, array<string, mixed>>, sources: array<int, array<string, mixed>>}|null */
     private static ?array $memo = null;
@@ -100,24 +102,25 @@ class CrmTaxonomy
                 return self::fromConfig();
             }
 
-            $stages  = LeadStage::ordered()->get()->map(fn (LeadStage $s) => [
-                'key'         => $s->key,
-                'label'       => $s->label,
-                'color'       => $s->color,
-                'sort_order'  => $s->sort_order,
+            $stages = LeadStage::ordered()->get()->map(fn (LeadStage $s) => [
+                'key' => $s->key,
+                'label' => $s->label,
+                'color' => $s->color,
+                'sort_order' => $s->sort_order,
                 'is_terminal' => $s->is_terminal,
-                'is_system'   => $s->is_system,
-                'is_active'   => $s->is_active,
+                'owner_role' => $s->owner_role,
+                'is_system' => $s->is_system,
+                'is_active' => $s->is_active,
             ])->all();
 
             $sources = LeadSource::ordered()->get()->map(fn (LeadSource $s) => [
-                'key'                => $s->key,
-                'label'              => $s->label,
-                'sort_order'         => $s->sort_order,
-                'default_stage_key'  => $s->default_stage_key,
+                'key' => $s->key,
+                'label' => $s->label,
+                'sort_order' => $s->sort_order,
+                'default_stage_key' => $s->default_stage_key,
                 'default_owner_role' => $s->default_owner_role,
-                'is_system'          => $s->is_system,
-                'is_active'          => $s->is_active,
+                'is_system' => $s->is_system,
+                'is_active' => $s->is_active,
             ])->all();
         } catch (Throwable) {
             return self::fromConfig();
@@ -134,9 +137,9 @@ class CrmTaxonomy
             $fallback = self::fromConfig();
 
             return [
-                'stages'  => $stages === [] ? $fallback['stages'] : $stages,
+                'stages' => $stages === [] ? $fallback['stages'] : $stages,
                 'sources' => $sources === [] ? $fallback['sources'] : $sources,
-                'store'   => 'config',
+                'store' => 'config',
             ];
         }
 
@@ -149,17 +152,18 @@ class CrmTaxonomy
     private static function fromConfig(): array
     {
         $terminal = (array) config('crm.terminal_stages', []);
-        $order    = 0;
+        $order = 0;
 
         $stages = collect((array) config('crm.stages', []))
             ->map(fn ($label, $key) => [
-                'key'         => (string) $key,
-                'label'       => (string) $label,
-                'color'       => (string) config("crm.stage_colors.$key", '#8A94A0'),
-                'sort_order'  => $order += 10,
+                'key' => (string) $key,
+                'label' => (string) $label,
+                'color' => (string) config("crm.stage_colors.$key", '#8A94A0'),
+                'sort_order' => $order += 10,
                 'is_terminal' => in_array($key, $terminal, true),
-                'is_system'   => true,
-                'is_active'   => true,
+                'owner_role' => in_array($key, $terminal, true) ? null : self::seededOwnerRole((string) $key),
+                'is_system' => true,
+                'is_active' => true,
             ])
             ->values()
             ->all();
@@ -168,13 +172,13 @@ class CrmTaxonomy
 
         $sources = collect((array) config('crm.sources', []))
             ->map(fn ($label, $key) => [
-                'key'                => (string) $key,
-                'label'              => (string) $label,
-                'sort_order'         => $order += 10,
-                'default_stage_key'  => config("crm.source_defaults.$key.stage"),
+                'key' => (string) $key,
+                'label' => (string) $label,
+                'sort_order' => $order += 10,
+                'default_stage_key' => config("crm.source_defaults.$key.stage"),
                 'default_owner_role' => config("crm.source_defaults.$key.owner_role"),
-                'is_system'          => $key === 'broker',
-                'is_active'          => true,
+                'is_system' => $key === 'broker',
+                'is_active' => true,
             ])
             ->values()
             ->all();
@@ -309,6 +313,34 @@ class CrmTaxonomy
     public static function isTerminal(?string $key): bool
     {
         return in_array($key, self::terminalStages(), true);
+    }
+
+    /**
+     * The desk a new lead at this stage is given to — `telecaller` or
+     * `salesperson` — or null for a terminal stage, which gives it to nobody
+     * new. LeadAssignmentService is what turns this into a person.
+     *
+     * An open stage always answers. A row whose `owner_role` is empty (the
+     * column was added after the row, or the key names a stage no row knows)
+     * falls back to the seeded rule rather than to "nobody", because an open
+     * lead with nobody's name on it is on nobody's list.
+     */
+    public static function ownerRoleFor(?string $key): ?string
+    {
+        if (self::isTerminal($key)) {
+            return null;
+        }
+
+        $row = collect(self::stageRows())->firstWhere('key', $key);
+
+        return ($row['owner_role'] ?? null) ?: self::seededOwnerRole((string) $key);
+    }
+
+    /** What `crm.stage_owner_roles` says for an open stage — the mapping as first seeded. */
+    public static function seededOwnerRole(string $key): string
+    {
+        return (string) (config('crm.stage_owner_roles')[$key]
+            ?? config('crm.stage_owner_role_default', 'salesperson'));
     }
 
     /**

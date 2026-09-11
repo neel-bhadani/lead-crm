@@ -15,6 +15,10 @@ const MAX_VISIBLE = 4
 // an error is worth reading twice, so it stays around longer
 const DURATIONS = { success: 4000, warning: 4000, error: 6000 }
 
+// and a long message stays long enough to be read: roughly reading speed. A
+// warning that explains a consequence and vanishes mid-sentence was not said
+const MS_PER_CHARACTER = 60
+
 export const toasts = reactive([])
 
 // id -> { handle, remaining, startedAt }; kept out of the reactive array
@@ -71,7 +75,7 @@ function push(type, message) {
     if (!text) return null
 
     const id = nextId++
-    const duration = DURATIONS[type] ?? DURATIONS.success
+    const duration = Math.max(DURATIONS[type] ?? DURATIONS.success, text.length * MS_PER_CHARACTER)
 
     toasts.push({ id, type, message: text })
 

@@ -7,6 +7,7 @@ use App\Models\Lead;
 use App\Models\MessageTemplate;
 use App\Models\User;
 use App\Services\AlertService;
+use App\Services\LeadAssignmentService;
 use App\Services\LeadFollowUpService;
 use App\Services\WhatsApp\TemplateRenderer;
 use App\Services\WhatsApp\WhatsAppSender;
@@ -39,6 +40,7 @@ class ActionRunner
 {
     public function __construct(
         private LeadFollowUpService $followUps,
+        private LeadAssignmentService $assignment,
         private AlertService $alerts,
         private WhatsAppSender $whatsapp,
         private TemplateRenderer $renderer,
@@ -54,12 +56,12 @@ class ActionRunner
         $type = $action['type'] ?? null;
 
         return match ($type) {
-            'assign_user'        => $this->assignUser($lead, $action),
+            'assign_user' => $this->assignUser($lead, $action),
             'assign_round_robin' => $this->assignRoundRobin($lead, $action),
-            'change_stage'       => $this->changeStage($rule, $lead, $action),
-            'create_follow_up'   => $this->createFollowUp($lead, $action),
-            'raise_alert'        => $this->raiseAlert($rule, $lead, $action),
-            'queue_whatsapp'     => $this->queueWhatsApp($rule, $lead, $action),
+            'change_stage' => $this->changeStage($rule, $lead, $action),
+            'create_follow_up' => $this->createFollowUp($lead, $action),
+            'raise_alert' => $this->raiseAlert($rule, $lead, $action),
+            'queue_whatsapp' => $this->queueWhatsApp($rule, $lead, $action),
             // a rule stored before an action was removed from the catalogue.
             // Skipped and logged rather than thrown: one retired action must
             // not stop the other four from running.
@@ -83,16 +85,17 @@ class ActionRunner
     }
 
     /**
-     * Round-robin across everybody active in a role.
+     * Round-robin across a role.
      *
-     * The same shape as the telecaller-to-salesperson handover: the last id
-     * used lives in the cache, and the next person is the first id above it,
-     * wrapping to the start. Cache, not a column, because losing the counter
-     * costs one slightly uneven assignment and nothing else — and because a
-     * counter in the database would need a lock on every lead that arrives.
+     * Salespeople take the lead's project's turn from LeadAssignmentService —
+     * the same per-project round robin, fallback and admin alert as lead
+     * creation and the handover. A rule keeping its own counter across every
+     * salesperson would hand a project's leads to people who do not handle it.
      *
-     * A separate key per role, so a telecaller rule and a salesperson rule do
-     * not take turns from the same pointer and skip half of each list.
+     * Telecallers are not chosen per project: the last id used lives in the
+     * cache, and the next person is the first id above it, wrapping to the
+     * start. Cache, not a column, because losing the counter costs one
+     * slightly uneven assignment and nothing else.
      */
     private function assignRoundRobin(Lead $lead, array $action): array
     {
@@ -102,19 +105,31 @@ class ActionRunner
             return $this->skip("This rule shares leads out among '{$role}', which is not a role.");
         }
 
+        if ($role === 'salesperson') {
+            $next = $this->assignment->takeSalespersonTurn($lead->project_id);
+
+            if (! $next) {
+                return $this->skip('There is nobody active on the salesperson desk to give this lead to.');
+            }
+
+            $this->followUps->asSystem(fn () => $this->followUps->assign($lead, $next));
+
+            return $this->ok();
+        }
+
         $people = User::active()->where('role', $role)->orderBy('id')->get();
 
         if ($people->isEmpty()) {
             return $this->skip("There is nobody active on the {$role} desk to give this lead to.");
         }
 
-        $key    = "automation.round_robin.$role";
+        $key = "automation.round_robin.$role";
         $lastId = (int) cache()->get($key, 0);
-        $next   = $people->first(fn (User $u) => $u->id > $lastId) ?? $people->first();
+        $next = $people->first(fn (User $u) => $u->id > $lastId) ?? $people->first();
 
         cache()->forever($key, $next->id);
 
-        $this->followUps->asSystem(fn () => $this->followUps->assign($lead, $next, $role));
+        $this->followUps->asSystem(fn () => $this->followUps->assign($lead, $next));
 
         return $this->ok();
     }
@@ -201,7 +216,7 @@ class ActionRunner
         }
 
         $title = $this->renderer->render((string) ($action['title'] ?? ''), $lead);
-        $body  = filled($action['body'] ?? null)
+        $body = filled($action['body'] ?? null)
             ? $this->renderer->render((string) $action['body'], $lead)
             : null;
 
@@ -213,7 +228,7 @@ class ActionRunner
             recipients: $recipients,
             // per rule, so two rules alerting on the same lead do not silence
             // one another through deduplication
-            type: 'rule.' . $rule->id,
+            type: 'rule.'.$rule->id,
             title: $title,
             body: $body,
             lead: $lead,
@@ -227,14 +242,14 @@ class ActionRunner
     }
 
     /**
-     * @return iterable<User>|null  null when the rule names nobody at all
+     * @return iterable<User>|null null when the rule names nobody at all
      */
     private function recipientsFor(Lead $lead, array $action): ?iterable
     {
         return match ($action['recipient'] ?? null) {
             'lead_owner' => $lead->owner && $lead->owner->is_active ? [$lead->owner] : [],
-            'admins'     => $this->alerts->admins(),
-            'role'       => isset($action['recipient_role'])
+            'admins' => $this->alerts->admins(),
+            'role' => isset($action['recipient_role'])
                 ? $this->alerts->role($action['recipient_role'])
                 : null,
             'user' => ($u = User::active()->find($action['recipient_user_id'] ?? null)) ? [$u] : [],

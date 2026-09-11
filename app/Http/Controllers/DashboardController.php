@@ -6,10 +6,12 @@ use App\Http\Controllers\Concerns\ResolvesFilters;
 use App\Models\Lead;
 use App\Models\Todo;
 use App\Models\User;
+use App\Support\CrmTaxonomy;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Inertia\Inertia;
-use App\Support\CrmTaxonomy;
 
 class DashboardController extends Controller
 {
@@ -127,11 +129,11 @@ class DashboardController extends Controller
         // note on the property
         $this->stageEvents = null;
 
-        $user    = $request->user();
+        $user = $request->user();
         $filters = $this->filters($request);
-        $range   = $this->resolveRange($filters);
-        $from    = $range['from'];
-        $to      = $range['to'];
+        $range = $this->resolveRange($filters);
+        $from = $range['from'];
+        $to = $range['to'];
 
         /*
          | The cross-filter, and the whole of it: at most one stage, one source
@@ -143,14 +145,14 @@ class DashboardController extends Controller
         $cross = $this->crossFilters($filters);
 
         return Inertia::render('Dashboard', [
-            'range'   => [
-                'key'   => $range['key'],
-                'from'  => $from->toDateString(),
-                'to'    => $to->toDateString(),
+            'range' => [
+                'key' => $range['key'],
+                'from' => $from->toDateString(),
+                'to' => $to->toDateString(),
                 'label' => $range['label'],
                 // today in IST. The picker uses this as its max rather than the
                 // browser clock, which may be in another timezone entirely.
-                'today'       => today()->toDateString(),
+                'today' => today()->toDateString(),
                 'maxSpanDays' => self::MAX_SPAN_DAYS,
             ],
             /*
@@ -159,7 +161,7 @@ class DashboardController extends Controller
              | chart query and then have it thrown away by the partial filter.
              | Inertia only invokes a closure for a prop it is actually sending.
              */
-            'cards'   => fn() => $this->cards($user, $from, $to, $cross),
+            'cards' => fn () => $this->cards($user, $from, $to, $cross),
             /*
              | Four charts, in the order the page draws them.
              |
@@ -174,13 +176,13 @@ class DashboardController extends Controller
              | anything here is allowed to: it describes a standing total rather
              | than a period. The note on that card says so.
              */
-            'charts'  => fn() => [
+            'charts' => fn () => [
                 // every lead, grouped by leads.stage. No window, ever.
-                'stagesAllTime'  => $this->stagesByLead($user, null, null, $cross),
+                'stagesAllTime' => $this->stagesByLead($user, null, null, $cross),
                 // the same query, narrowed to leads.created_at in the range
                 'stagesInPeriod' => $this->stagesByLead($user, $from, $to, $cross),
                 // leads.created_at again, split by where they came from
-                'bySource'       => $this->bySource($user, $from, $to, $cross),
+                'bySource' => $this->bySource($user, $from, $to, $cross),
                 /*
                  | The funnel, and it draws nothing of its own: it is
                  | stageEvents() — the query behind the Site visits, Bookings
@@ -188,7 +190,7 @@ class DashboardController extends Controller
                  | the Site visit done and Booking done bands are the matching
                  | cards rather than merely agreeing with them.
                  */
-                'funnel'         => $this->funnel($user, $from, $to, $cross),
+                'funnel' => $this->funnel($user, $from, $to, $cross),
             ],
             /*
              | The sign-in notice. A closure for the same reason the rest are,
@@ -197,10 +199,10 @@ class DashboardController extends Controller
              | sending. Reloading `cards` after a logged call therefore cannot
              | burn the one showing this session was owed.
              */
-            'todayDigest' => fn() => $this->todayDigest($request),
+            'todayDigest' => fn () => $this->todayDigest($request),
             // both panels are "right now", never filtered by the date range
-            'followUps' => fn() => [
-                'today'   => $this->followUps($user, 'today', $cross),
+            'followUps' => fn () => [
+                'today' => $this->followUps($user, 'today', $cross),
                 'overdue' => $this->followUps($user, 'overdue', $cross),
             ],
             /*
@@ -214,14 +216,14 @@ class DashboardController extends Controller
              | strings plus `options`, which the page already has.
              */
             'filters' => [
-                'stage'   => $cross['stage']   ?? '',
-                'source'  => $cross['source']  ?? '',
+                'stage' => $cross['stage'] ?? '',
+                'source' => $cross['source'] ?? '',
                 'reached' => $cross['reached'] ?? '',
             ],
-            'options'  => [
+            'options' => [
                 // the three presets DateRangePicker draws, shared with the two
                 // report pages so all three offer the same windows
-                'ranges'      => config('crm.date_ranges'),
+                'ranges' => config('crm.date_ranges'),
                 /*
                  | `stages` and `sources` are EVERY row, retired ones included,
                  | because these two maps are what StageBadge, the cross-filter
@@ -230,23 +232,24 @@ class DashboardController extends Controller
                  | "In discussion" and not `in_discussion`. What may be CHOSEN
                  | is the two lists below them, which the dropdowns filter by.
                  */
-                'stages'       => CrmTaxonomy::allStages(),
+                'stages' => CrmTaxonomy::allStages(),
                 'activeStages' => CrmTaxonomy::activeStageKeys(),
-                'stageColors'  => CrmTaxonomy::stageColors(),
-                'sources'       => CrmTaxonomy::allSources(),
+                'stageColors' => CrmTaxonomy::stageColors(),
+                'sources' => CrmTaxonomy::allSources(),
                 'activeSources' => CrmTaxonomy::activeSourceKeys(),
                 // CompleteTaskModal needs these to offer a reason when a call
                 // ends in "lost"; StageBadge inside it reads stageColors above.
-                'reasons'     => config('crm.lost_reasons'),
+                'reasons' => config('crm.lost_reasons'),
                 // and these to book the next follow-up: the task types it can
                 // be, the stages that end the chain instead, and the one stage
                 // that forces the next task to be the site visit
-                'types'          => config('crm.todo_types'),
+                'types' => config('crm.todo_types'),
                 'terminalStages' => CrmTaxonomy::terminalStages(),
-                'handoverStage'  => CrmTaxonomy::handoverStage(),
+                'handoverStage' => CrmTaxonomy::handoverStage(),
+                'handoverRole' => CrmTaxonomy::ownerRoleFor(CrmTaxonomy::handoverStage()),
                 // CallButtons builds its tel: and wa.me hrefs from this
                 'countryCode' => config('crm.country_code'),
-                'roleLabels'  => config('crm.role_labels'),
+                'roleLabels' => config('crm.role_labels'),
             ],
         ]);
     }
@@ -280,7 +283,7 @@ class DashboardController extends Controller
          | Only the two WRITE forms — LeadRequest and CompleteTodoRequest —
          | restrict a stage to the active ones.
          */
-        $stages  = implode(',', CrmTaxonomy::stageKeys());
+        $stages = implode(',', CrmTaxonomy::stageKeys());
         $sources = implode(',', CrmTaxonomy::sourceKeys());
 
         return $this->resolveFilters(
@@ -288,17 +291,17 @@ class DashboardController extends Controller
             'dashboard',
             [
                 'range' => ['sometimes', 'string', 'in:today,7,30'],
-                'from'  => ['sometimes', 'string', 'date_format:Y-m-d'],
-                'to'    => ['sometimes', 'string', 'date_format:Y-m-d'],
+                'from' => ['sometimes', 'string', 'date_format:Y-m-d'],
+                'to' => ['sometimes', 'string', 'date_format:Y-m-d'],
                 // where a lead stands now — the two stage charts' own dimension
-                'stage'   => ['sometimes', 'string', 'in:' . $stages],
+                'stage' => ['sometimes', 'string', 'in:'.$stages],
                 // where it came from — the doughnut's dimension
-                'source'  => ['sometimes', 'string', 'in:' . $sources],
+                'source' => ['sometimes', 'string', 'in:'.$sources],
                 // a stage a lead has BEEN through — the funnel's dimension
-                'reached' => ['sometimes', 'string', 'in:' . $stages],
+                'reached' => ['sometimes', 'string', 'in:'.$stages],
             ],
             ['range' => '30'],
-            fn(array $state) => $this->sanitiseRange($state),
+            fn (array $state) => $this->sanitiseRange($state),
         );
     }
 
@@ -321,7 +324,7 @@ class DashboardController extends Controller
     {
         $cross = array_intersect_key($filters, array_flip(self::CROSS_KEYS));
 
-        return array_filter($cross, fn($v) => $v !== null && $v !== '');
+        return array_filter($cross, fn ($v) => $v !== null && $v !== '');
     }
 
     /**
@@ -345,17 +348,17 @@ class DashboardController extends Controller
         }
 
         return $query
-            ->when(isset($cross['stage']), fn($q) => $q->where('stage', $cross['stage']))
-            ->when(isset($cross['source']), fn($q) => $q->where('source', $cross['source']))
+            ->when(isset($cross['stage']), fn ($q) => $q->where('stage', $cross['stage']))
+            ->when(isset($cross['source']), fn ($q) => $q->where('source', $cross['source']))
             /*
              | whereNotNull('completed_at') for the same reason every other
              | history clause on this page carries it: only a completed row is
              | a thing that happened, and a pending to-do carrying a planned
              | outcome is not a stage the lead has reached.
              */
-            ->when(isset($cross['reached']), fn($q) => $q->whereHas(
+            ->when(isset($cross['reached']), fn ($q) => $q->whereHas(
                 'todos',
-                fn($t) => $t->where('outcome_stage', $cross['reached'])->whereNotNull('completed_at'),
+                fn ($t) => $t->where('outcome_stage', $cross['reached'])->whereNotNull('completed_at'),
             ));
     }
 
@@ -377,7 +380,7 @@ class DashboardController extends Controller
             return $query;
         }
 
-        return $query->whereHas('lead', fn($q) => $this->crossFilterLeads($q, $cross));
+        return $query->whereHas('lead', fn ($q) => $this->crossFilterLeads($q, $cross));
     }
 
     /**
@@ -390,7 +393,7 @@ class DashboardController extends Controller
     private function sanitiseRange(array $state): array
     {
         $from = $state['from'] ?? null;
-        $to   = $state['to'] ?? null;
+        $to = $state['to'] ?? null;
 
         if ($from === null || $to === null) {
             unset($state['from'], $state['to']);
@@ -400,7 +403,7 @@ class DashboardController extends Controller
 
         $today = today();   // IST — the app timezone is Asia/Kolkata
         $start = Carbon::createFromFormat('Y-m-d', $from)->startOfDay();
-        $end   = Carbon::createFromFormat('Y-m-d', $to)->endOfDay();
+        $end = Carbon::createFromFormat('Y-m-d', $to)->endOfDay();
 
         // backwards, in the future, or too wide to bucket usefully — and a lot
         // of rows to scan for a chart
@@ -417,7 +420,7 @@ class DashboardController extends Controller
     private function resolveRange(array $filters): array
     {
         $from = $filters['from'] ?? null;
-        $to   = $filters['to'] ?? null;
+        $to = $filters['to'] ?? null;
 
         if ($from === null || $to === null) {
             return $this->preset((string) ($filters['range'] ?? '30'), today());
@@ -453,7 +456,7 @@ class DashboardController extends Controller
     {
         return match ($key) {
             'today' => $this->describe('today', $today->copy()->startOfDay(), $today->copy()->endOfDay()),
-            '7'     => $this->describe('7', $today->copy()->subDays(6)->startOfDay(), $today->copy()->endOfDay()),
+            '7' => $this->describe('7', $today->copy()->subDays(6)->startOfDay(), $today->copy()->endOfDay()),
             default => $this->describe('30', $today->copy()->subDays(29)->startOfDay(), $today->copy()->endOfDay()),
         };
     }
@@ -461,9 +464,9 @@ class DashboardController extends Controller
     private function describe(string $key, Carbon $from, Carbon $to): array
     {
         return [
-            'key'   => $key,
-            'from'  => $from,
-            'to'    => $to,
+            'key' => $key,
+            'from' => $from,
+            'to' => $to,
             'label' => $this->rangeLabel($from, $to),
         ];
     }
@@ -479,7 +482,7 @@ class DashboardController extends Controller
     {
         $format = $from->year === $to->year ? 'j M' : 'j M y';
 
-        return $from->format($format) . ' – ' . $to->format($format);
+        return $from->format($format).' – '.$to->format($format);
     }
 
     /* ---------------- KPI cards ---------------- */
@@ -504,7 +507,7 @@ class DashboardController extends Controller
 
         $visits = $events['site_visit_done'];
         $booked = $events['booking_done'];
-        $lost   = $events['lost'];
+        $lost = $events['lost'];
 
         /*
          | Conversion is a cohort figure, not $booked / $total.
@@ -521,7 +524,7 @@ class DashboardController extends Controller
             // whereNotNull('completed_at') for the same reason the cards use it:
             // the numerator has to count a booking that *happened*, and only a
             // completed row is a thing that happened
-            ->whereHas('todos', fn($q) => $q->where('outcome_stage', 'booking_done')
+            ->whereHas('todos', fn ($q) => $q->where('outcome_stage', 'booking_done')
                 ->whereNotNull('completed_at'))
             ->count();
 
@@ -545,7 +548,7 @@ class DashboardController extends Controller
          * of the same length and ending the day before it starts: 1–15 June is
          * measured against 17–31 May, and Today against the whole of yesterday.
          */
-        $prevTo   = $from->copy()->subDay()->endOfDay();
+        $prevTo = $from->copy()->subDay()->endOfDay();
         $prevFrom = $prevTo->copy()->startOfDay()->subDays($this->spanInDays($from, $to) - 1);
 
         $prevTotal = $this->crossFilterLeads(Lead::visibleTo($user), $cross)
@@ -553,12 +556,12 @@ class DashboardController extends Controller
             ->count();
 
         return [
-            'total'      => $total,
-            'today'      => $today,
-            'visits'     => $visits,
-            'booked'     => $booked,
-            'lost'       => $lost,
-            'pending'    => $pending,
+            'total' => $total,
+            'today' => $today,
+            'visits' => $visits,
+            'booked' => $booked,
+            'lost' => $lost,
+            'pending' => $pending,
             /*
              | Cohort: of the leads created in this range, how many have since
              | reached booking_done, at any time. Numerator is a subset of the
@@ -569,14 +572,14 @@ class DashboardController extends Controller
              | error.
              */
             'conversion' => $total > 0 ? round($cohortBooked / $total * 100, 1) : null,
-            'delta'      => $prevTotal > 0 ? round(($total - $prevTotal) / $prevTotal * 100) : null,
+            'delta' => $prevTotal > 0 ? round(($total - $prevTotal) / $prevTotal * 100) : null,
             /*
              | One short series per tile, for the sparkline inside it. Shapes,
              | not figures: no axis is drawn beside them and no number is read
              | off them, so what matters is that a bucket with nothing in it is
              | a zero and not a missing point.
              */
-            'spark'      => $this->sparklines($user, $from, $to, $cross),
+            'spark' => $this->sparklines($user, $from, $to, $cross),
         ];
     }
 
@@ -619,7 +622,7 @@ class DashboardController extends Controller
          */
         $events = [];
 
-        $rows = Todo::whereHas('lead', fn($q) => $this->crossFilterLeads($q->visibleTo($user), $cross))
+        $rows = Todo::whereHas('lead', fn ($q) => $this->crossFilterLeads($q->visibleTo($user), $cross))
             ->whereIn('outcome_stage', ['site_visit_done', 'booking_done', 'lost'])
             ->whereBetween('completed_at', [$from, $to])
             ->selectRaw('DATE(completed_at) as d, outcome_stage as s, count(distinct lead_id) as total')
@@ -648,19 +651,19 @@ class DashboardController extends Controller
             ->all();
 
         return [
-            'weekly'  => $bucket['weekly'],
+            'weekly' => $bucket['weekly'],
             'buckets' => $bucket['count'],
-            'total'   => $this->series($bucket, $intake),
+            'total' => $this->series($bucket, $intake),
             /*
              | Enquiries today rides the intake series too, and deliberately.
              | It is the same measurement — leads by the day they arrived — and
              | the card is one bucket of it, so drawing a second line would be
              | drawing the same line under a different name.
              */
-            'today'   => $this->series($bucket, $intake),
-            'visits'  => $this->series($bucket, $events['site_visit_done'] ?? []),
-            'booked'  => $this->series($bucket, $events['booking_done'] ?? []),
-            'lost'    => $this->series($bucket, $events['lost'] ?? []),
+            'today' => $this->series($bucket, $intake),
+            'visits' => $this->series($bucket, $events['site_visit_done'] ?? []),
+            'booked' => $this->series($bucket, $events['booking_done'] ?? []),
+            'lost' => $this->series($bucket, $events['lost'] ?? []),
             'pending' => $this->series($bucket, $pending),
         ];
     }
@@ -683,11 +686,11 @@ class DashboardController extends Controller
      */
     private function bucketing(Carbon $from, Carbon $to): array
     {
-        $days   = $this->spanInDays($from, $to);
+        $days = $this->spanInDays($from, $to);
         $weekly = $days > self::DAILY_MAX_DAYS;
-        $size   = $weekly ? 7 : 1;
+        $size = $weekly ? 7 : 1;
 
-        $map    = [];
+        $map = [];
         $cursor = $from->copy()->startOfDay();
 
         for ($day = 0; $day < $days; $day++) {
@@ -762,7 +765,7 @@ class DashboardController extends Controller
         $counts = $this->crossFilterLeads(Lead::visibleTo($user), $cross)
             ->when(
                 $from !== null && $to !== null,
-                fn($q) => $q->whereBetween('created_at', [$from, $to]),
+                fn ($q) => $q->whereBetween('created_at', [$from, $to]),
             )
             ->selectRaw('stage, count(*) as total')
             ->groupBy('stage')
@@ -781,8 +784,8 @@ class DashboardController extends Controller
         $colors = CrmTaxonomy::stageColors();
 
         $bars = collect(CrmTaxonomy::stageUniverse($counts->keys()))
-            ->map(fn($label, $key) => [
-                'key'   => $key,
+            ->map(fn ($label, $key) => [
+                'key' => $key,
                 'label' => $label,
                 'value' => (int) ($counts[$key] ?? 0),
                 'color' => $colors[$key] ?? null,
@@ -831,7 +834,7 @@ class DashboardController extends Controller
             return $this->stageEvents;
         }
 
-        $counts = Todo::whereHas('lead', fn($q) => $this->crossFilterLeads($q->visibleTo($user), $cross))
+        $counts = Todo::whereHas('lead', fn ($q) => $this->crossFilterLeads($q->visibleTo($user), $cross))
             ->whereNotNull('outcome_stage')
             ->whereBetween('completed_at', [$from, $to])
             ->selectRaw('outcome_stage, count(distinct lead_id) as total')
@@ -841,7 +844,7 @@ class DashboardController extends Controller
         // every stage the vocabulary knows, so the funnel below can index
         // this by key without checking first
         return $this->stageEvents = collect(CrmTaxonomy::allStages())
-            ->map(fn($label, $key) => (int) ($counts[$key] ?? 0))
+            ->map(fn ($label, $key) => (int) ($counts[$key] ?? 0))
             ->all();
     }
 
@@ -899,7 +902,7 @@ class DashboardController extends Controller
         $colors = CrmTaxonomy::stageColors();
         $labels = CrmTaxonomy::allStages();
 
-        $values = array_map(fn($key) => $events[$key] ?? 0, $stages);
+        $values = array_map(fn ($key) => $events[$key] ?? 0, $stages);
         $widest = max($values ?: [0]);
 
         $bands = [];
@@ -909,7 +912,7 @@ class DashboardController extends Controller
             $value = $values[$index];
 
             $bands[] = [
-                'key'   => $key,
+                'key' => $key,
                 'label' => $labels[$key] ?? $key,
                 'value' => $value,
                 // the same colour the stage has in a badge, a chip and both
@@ -929,7 +932,7 @@ class DashboardController extends Controller
                  | an em dash, never 0%. A negative value is a band that grew,
                  | which this shape allows and the front end says out loud.
                  */
-                'drop'  => ($above === null || $above === 0)
+                'drop' => ($above === null || $above === 0)
                     ? null
                     : round(($above - $value) / $above * 100, 1),
             ];
@@ -952,16 +955,16 @@ class DashboardController extends Controller
 
         // a pie drops empty slices, unlike a bar chart
         return collect(CrmTaxonomy::sourceUniverse($counts->keys()))
-            ->map(fn($label, $key) => [
+            ->map(fn ($label, $key) => [
                 // the config key as well as its label, so a click on a slice
                 // knows which source it is filtering by without the front end
                 // having to look a label back up
-                'key'     => $key,
-                'label'   => $label,
-                'value'   => (int) ($counts[$key] ?? 0),
+                'key' => $key,
+                'label' => $label,
+                'value' => (int) ($counts[$key] ?? 0),
                 'percent' => $sum > 0 ? round(($counts[$key] ?? 0) / $sum * 100, 1) : 0,
             ])
-            ->filter(fn($row) => $row['value'] > 0)
+            ->filter(fn ($row) => $row['value'] > 0)
             ->values()->all();
     }
 
@@ -993,7 +996,7 @@ class DashboardController extends Controller
          | not: "which of the leads I am looking at owe me a call" is a
          | sensible question, "which calls are due today, in August" is not.
          */
-        $query = fn() => $this->crossFilterTodos(
+        $query = fn () => $this->crossFilterTodos(
             $scope === 'overdue'
                 ? Todo::forUser($user)->hasLead()->overdue()
                 : Todo::forUser($user)->hasLead()->dueToday(),
@@ -1060,7 +1063,7 @@ class DashboardController extends Controller
 
         // a factory, not a builder: the count, the grouping and the rows are
         // three queries that have to be asking the same question
-        $due = fn() => Todo::forUser($user)->hasLead()->pending()
+        $due = fn () => Todo::forUser($user)->hasLead()->pending()
             ->where('scheduled_at', '<=', today()->endOfDay());
 
         $total = $due()->count();
@@ -1089,11 +1092,11 @@ class DashboardController extends Controller
             ->get();
 
         return [
-            'total'  => $total,
-            'shown'  => $rows->count(),
+            'total' => $total,
+            'shown' => $rows->count(),
             // "and 4 more" — the difference between what is listed and what is
             // owed, computed here so the modal never has to subtract anything
-            'more'   => $total - $rows->count(),
+            'more' => $total - $rows->count(),
             'groups' => $this->digestGroups($user, $due, $rows),
         ];
     }
@@ -1113,17 +1116,17 @@ class DashboardController extends Controller
      * rest. Groups are built from the listed rows, so nobody appears as a
      * heading with nothing under it.
      *
-     * @param  callable(): \Illuminate\Database\Eloquent\Builder  $due
-     * @param  \Illuminate\Database\Eloquent\Collection<int, Todo>  $rows
+     * @param  callable(): Builder  $due
+     * @param  Collection<int, Todo>  $rows
      * @return list<array{name: ?string, count: int, rows: list<array<string, mixed>>}>
      */
     private function digestGroups(User $user, callable $due, $rows): array
     {
         if (! $user->isAdmin()) {
             return [[
-                'name'  => null,
+                'name' => null,
                 'count' => $rows->count(),
-                'rows'  => $rows->map(fn(Todo $todo) => $this->digestRow($todo))->all(),
+                'rows' => $rows->map(fn (Todo $todo) => $this->digestRow($todo))->all(),
             ]];
         }
 
@@ -1143,10 +1146,10 @@ class DashboardController extends Controller
          | forgotten call from last week under somebody's busy afternoon.
          */
         return $rows->groupBy('assigned_to')
-            ->map(fn($group, $id) => [
-                'name'  => $names[$id]?->display_name ?? 'Unassigned',
+            ->map(fn ($group, $id) => [
+                'name' => $names[$id]?->display_name ?? 'Unassigned',
                 'count' => (int) ($counts[$id] ?? $group->count()),
-                'rows'  => $group->map(fn(Todo $todo) => $this->digestRow($todo))->values()->all(),
+                'rows' => $group->map(fn (Todo $todo) => $this->digestRow($todo))->values()->all(),
             ])
             ->values()->all();
     }
@@ -1165,11 +1168,11 @@ class DashboardController extends Controller
     private function digestRow(Todo $todo): array
     {
         return [
-            'id'      => $todo->id,
-            'name'    => $todo->lead?->full_name,
-            'mobile'  => $todo->lead?->mobile_number,
-            'stage'   => $todo->lead?->stage,
-            'at'      => $todo->scheduled_at?->toIso8601String(),
+            'id' => $todo->id,
+            'name' => $todo->lead?->full_name,
+            'mobile' => $todo->lead?->mobile_number,
+            'stage' => $todo->lead?->stage,
+            'at' => $todo->scheduled_at?->toIso8601String(),
             'earlier' => $todo->scheduled_at !== null
                 && $todo->scheduled_at->lt(today()->startOfDay()),
         ];

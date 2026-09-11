@@ -9,6 +9,8 @@ use App\Models\Lead;
 use App\Models\Project;
 use App\Models\Todo;
 use App\Models\User;
+use App\Services\Automation\LoopGuard;
+use App\Services\Automation\RuleEngine;
 use App\Services\LeadFollowUpService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -37,16 +39,19 @@ use Tests\TestCase;
  *   THE TEST BUTTON It reports and does not fire. An admin pressing Test on a
  *                   switched-off rule must not discover afterwards that it ran.
  *
- * @see \App\Services\Automation\RuleEngine
- * @see \App\Services\Automation\LoopGuard
+ * @see RuleEngine
+ * @see LoopGuard
  */
 class AutomationEngineTest extends TestCase
 {
     use RefreshDatabase;
 
     private User $admin;
+
     private User $tele;
+
     private User $sales;
+
     private Project $project;
 
     protected function setUp(): void
@@ -56,10 +61,13 @@ class AutomationEngineTest extends TestCase
         Carbon::setTestNow(Carbon::parse('2026-09-08 11:00', 'Asia/Kolkata'));
 
         $this->admin = $this->user('admin', 'Ann');
-        $this->tele  = $this->user('telecaller', 'Tara');
+        $this->tele = $this->user('telecaller', 'Tara');
         $this->sales = $this->user('salesperson', 'Sam');
 
         $this->project = Project::create(['name' => 'Skyline Residency']);
+        // Sam handles it, so a handover here is a plain one and raises no
+        // "no salesperson assigned" alert of its own
+        $this->project->salespeople()->attach($this->sales);
     }
 
     protected function tearDown(): void
@@ -73,9 +81,9 @@ class AutomationEngineTest extends TestCase
     public function test_a_lead_created_rule_runs_and_leaves_the_invariant_intact(): void
     {
         $this->rule([
-            'trigger'    => 'lead_created',
+            'trigger' => 'lead_created',
             'conditions' => [['field' => 'source', 'value' => 'facebook']],
-            'actions'    => [
+            'actions' => [
                 ['type' => 'assign_round_robin', 'role' => 'telecaller'],
                 ['type' => 'create_follow_up', 'hours' => 1, 'todo_type' => 'call', 'remarks' => 'First call'],
             ],
@@ -99,13 +107,48 @@ class AutomationEngineTest extends TestCase
         $this->assertSame($this->tele->id, $todo->assigned_to, 'the task went with the lead');
     }
 
+    /**
+     * A rule sharing leads among salespeople takes the project's own turns,
+     * not a counter across every salesperson. Sol handles another project and
+     * sits between Sam and Sia by id, so a global round robin would reach him.
+     */
+    public function test_a_salesperson_round_robin_rule_takes_turns_within_the_leads_project(): void
+    {
+        $sol = $this->user('salesperson', 'Sol');
+        $sia = $this->user('salesperson', 'Sia');
+        $this->project->salespeople()->attach($sia);
+
+        $this->rule([
+            'trigger' => 'lead_created',
+            'conditions' => [['field' => 'source', 'value' => 'facebook']],
+            'actions' => [['type' => 'assign_round_robin', 'role' => 'salesperson']],
+            'is_active' => true,
+        ]);
+
+        $owners = [];
+
+        foreach (['9876543201', '9876543202', '9876543203'] as $mobile) {
+            $this->actingAs($this->admin)
+                ->post('/leads', $this->leadPayload(['source' => 'facebook', 'mobile_number' => $mobile]))
+                ->assertSessionHasNoErrors();
+
+            $owners[] = Lead::where('mobile_number', $mobile)->firstOrFail()->owner->first_name;
+        }
+
+        $this->assertSame(['Sam', 'Sia', 'Sam'], $owners);
+        $this->assertSame(0, Lead::where('assigned_to', $sol->id)->count());
+        $this->assertSame($this->sales->id, $this->project->fresh()->last_assigned_salesperson_id);
+        $this->assertSame(0, Alert::count(), 'the project is set up');
+        $this->assertSame(0, Lead::open()->doesntHave('pendingTodo')->count());
+    }
+
     public function test_a_stage_changed_rule_runs_only_for_its_own_stage(): void
     {
         $this->rule([
-            'trigger'        => 'stage_changed',
+            'trigger' => 'stage_changed',
             'trigger_config' => ['stage' => 'site_visit_done'],
-            'actions'        => [['type' => 'create_follow_up', 'hours' => 24, 'type' => 'call']],
-            'is_active'      => true,
+            'actions' => [['type' => 'create_follow_up', 'hours' => 24, 'type' => 'call']],
+            'is_active' => true,
         ]);
 
         $lead = $this->lead(['stage' => 'connected', 'assigned_to' => $this->tele->id]);
@@ -129,13 +172,13 @@ class AutomationEngineTest extends TestCase
     public function test_a_lead_assigned_rule_runs_on_the_handover(): void
     {
         $this->rule([
-            'trigger'   => 'lead_assigned',
-            'actions'   => [[
-                'type'      => 'raise_alert',
+            'trigger' => 'lead_assigned',
+            'actions' => [[
+                'type' => 'raise_alert',
                 'recipient' => 'lead_owner',
-                'severity'  => 'info',
-                'title'     => '{lead_name} is now yours',
-                'body'      => 'Booked in for a site visit at {project}.',
+                'severity' => 'info',
+                'title' => '{lead_name} is now yours',
+                'body' => 'Booked in for a site visit at {project}.',
             ]],
             'is_active' => true,
         ]);
@@ -160,9 +203,9 @@ class AutomationEngineTest extends TestCase
     public function test_a_time_triggered_rule_runs_from_the_hourly_command(): void
     {
         $this->rule([
-            'trigger'        => 'follow_up_overdue',
+            'trigger' => 'follow_up_overdue',
             'trigger_config' => ['days' => 3],
-            'actions'        => [[
+            'actions' => [[
                 'type' => 'raise_alert', 'recipient' => 'lead_owner', 'severity' => 'warning',
                 'title' => 'Chase {first_name}',
             ]],
@@ -181,9 +224,9 @@ class AutomationEngineTest extends TestCase
     public function test_a_stage_idle_rule_runs_from_the_hourly_command(): void
     {
         $this->rule([
-            'trigger'        => 'stage_idle',
+            'trigger' => 'stage_idle',
             'trigger_config' => ['stage' => 'in_discussion', 'days' => 7],
-            'actions'        => [[
+            'actions' => [[
                 'type' => 'raise_alert', 'recipient' => 'admins', 'severity' => 'warning',
                 'title' => '{lead_name} is stuck in discussion',
             ]],
@@ -191,8 +234,8 @@ class AutomationEngineTest extends TestCase
         ]);
 
         $lead = $this->lead([
-            'stage'            => 'in_discussion',
-            'assigned_to'      => $this->sales->id,
+            'stage' => 'in_discussion',
+            'assigned_to' => $this->sales->id,
             'stage_changed_at' => Carbon::parse('2026-08-20 10:00'),
         ]);
         $this->todoFor($lead);
@@ -201,7 +244,7 @@ class AutomationEngineTest extends TestCase
 
         $this->assertDatabaseHas('alerts', [
             'user_id' => $this->admin->id,
-            'title'   => 'Rahul Mehta is stuck in discussion',
+            'title' => 'Rahul Mehta is stuck in discussion',
         ]);
         $this->assertSame(0, Lead::open()->doesntHave('pendingTodo')->count());
     }
@@ -223,19 +266,19 @@ class AutomationEngineTest extends TestCase
     public function test_two_rules_that_ping_pong_a_stage_are_stopped_and_logged(): void
     {
         $this->rule([
-            'name'           => 'Bounce to not connected',
-            'trigger'        => 'stage_changed',
+            'name' => 'Bounce to not connected',
+            'trigger' => 'stage_changed',
             'trigger_config' => ['stage' => 'connected'],
-            'actions'        => [['type' => 'change_stage', 'stage' => 'not_connected']],
-            'is_active'      => true,
+            'actions' => [['type' => 'change_stage', 'stage' => 'not_connected']],
+            'is_active' => true,
         ]);
 
         $this->rule([
-            'name'           => 'Bounce back to connected',
-            'trigger'        => 'stage_changed',
+            'name' => 'Bounce back to connected',
+            'trigger' => 'stage_changed',
             'trigger_config' => ['stage' => 'not_connected'],
-            'actions'        => [['type' => 'change_stage', 'stage' => 'connected']],
-            'is_active'      => true,
+            'actions' => [['type' => 'change_stage', 'stage' => 'connected']],
+            'is_active' => true,
         ]);
 
         $lead = $this->lead(['stage' => 'fresh', 'assigned_to' => $this->tele->id]);
@@ -258,8 +301,8 @@ class AutomationEngineTest extends TestCase
         $this->assertContains($suppressed->first()->result, ['loop_guard', 'cooldown']);
 
         $this->assertDatabaseHas('alerts', [
-            'user_id'  => $this->admin->id,
-            'type'     => 'automation_suppressed',
+            'user_id' => $this->admin->id,
+            'type' => 'automation_suppressed',
             'severity' => 'warning',
         ]);
 
@@ -284,11 +327,11 @@ class AutomationEngineTest extends TestCase
 
         foreach ($ring as [$from, $to]) {
             $this->rule([
-                'name'           => "Ring $from to $to",
-                'trigger'        => 'stage_changed',
+                'name' => "Ring $from to $to",
+                'trigger' => 'stage_changed',
                 'trigger_config' => ['stage' => $from],
-                'actions'        => [['type' => 'change_stage', 'stage' => $to]],
-                'is_active'      => true,
+                'actions' => [['type' => 'change_stage', 'stage' => $to]],
+                'is_active' => true,
             ]);
         }
 
@@ -312,9 +355,9 @@ class AutomationEngineTest extends TestCase
     public function test_one_rule_does_not_fire_twice_on_the_same_lead_within_the_hour(): void
     {
         $this->rule([
-            'trigger'        => 'stage_changed',
+            'trigger' => 'stage_changed',
             'trigger_config' => ['stage' => 'connected'],
-            'actions'        => [[
+            'actions' => [[
                 'type' => 'raise_alert', 'recipient' => 'admins', 'severity' => 'info', 'title' => 'Moved',
             ]],
             'is_active' => true,
@@ -339,17 +382,17 @@ class AutomationEngineTest extends TestCase
     public function test_the_test_button_reports_matches_without_firing_anything(): void
     {
         $rule = $this->rule([
-            'trigger'    => 'lead_created',
+            'trigger' => 'lead_created',
             'conditions' => [['field' => 'source', 'value' => 'facebook']],
-            'actions'    => [['type' => 'change_stage', 'stage' => 'lost']],
-            'is_active'  => true,
+            'actions' => [['type' => 'change_stage', 'stage' => 'lost']],
+            'is_active' => true,
         ]);
 
         foreach (['facebook', 'facebook', 'walk_in'] as $i => $source) {
             $lead = $this->lead([
-                'source'        => $source,
-                'mobile_number' => '98765432' . str_pad((string) $i, 2, '0', STR_PAD_LEFT),
-                'assigned_to'   => $this->tele->id,
+                'source' => $source,
+                'mobile_number' => '98765432'.str_pad((string) $i, 2, '0', STR_PAD_LEFT),
+                'assigned_to' => $this->tele->id,
             ]);
             $this->todoFor($lead);
         }
@@ -358,7 +401,7 @@ class AutomationEngineTest extends TestCase
 
         $response = $this->actingAs($this->admin)
             ->postJson(route('automation.rules.match'), [
-                'trigger'    => $rule->trigger,
+                'trigger' => $rule->trigger,
                 'conditions' => $rule->conditionList(),
             ])
             ->assertOk();
@@ -411,9 +454,9 @@ class AutomationEngineTest extends TestCase
     public function test_nobody_is_alerted_about_a_lead_they_cannot_see(): void
     {
         $this->rule([
-            'trigger'        => 'stage_changed',
+            'trigger' => 'stage_changed',
             'trigger_config' => ['stage' => 'in_discussion'],
-            'actions'        => [[
+            'actions' => [[
                 'type' => 'raise_alert', 'recipient' => 'role', 'recipient_role' => 'telecaller',
                 'severity' => 'info', 'title' => 'Look at {lead_name}',
             ]],
@@ -475,11 +518,11 @@ class AutomationEngineTest extends TestCase
     private function rule(array $attrs): AutomationRule
     {
         return AutomationRule::create($attrs + [
-            'name'       => 'Test rule ' . AutomationRule::count(),
-            'trigger'    => 'lead_created',
+            'name' => 'Test rule '.AutomationRule::count(),
+            'trigger' => 'lead_created',
             'conditions' => [],
-            'actions'    => [],
-            'is_active'  => false,
+            'actions' => [],
+            'is_active' => false,
             'created_by' => $this->admin->id,
         ]);
     }
@@ -487,40 +530,40 @@ class AutomationEngineTest extends TestCase
     private function lead(array $attrs = []): Lead
     {
         return Lead::create($attrs + [
-            'first_name'       => 'Rahul',
-            'last_name'        => 'Mehta',
-            'mobile_number'    => '9876543210',
-            'project_id'       => $this->project->id,
-            'source'           => 'walk_in',
-            'stage'            => 'fresh',
-            'assigned_role'    => 'telecaller',
+            'first_name' => 'Rahul',
+            'last_name' => 'Mehta',
+            'mobile_number' => '9876543210',
+            'project_id' => $this->project->id,
+            'source' => 'walk_in',
+            'stage' => 'fresh',
+            'assigned_role' => 'telecaller',
             'stage_changed_at' => now(),
-            'created_by'       => $this->admin->id,
+            'created_by' => $this->admin->id,
         ]);
     }
 
     private function todoFor(Lead $lead, ?Carbon $when = null): Todo
     {
         return Todo::create([
-            'lead_id'      => $lead->id,
-            'assigned_to'  => $lead->assigned_to,
-            'created_by'   => $this->admin->id,
+            'lead_id' => $lead->id,
+            'assigned_to' => $lead->assigned_to,
+            'created_by' => $this->admin->id,
             'scheduled_at' => $when ?? now()->addDay(),
-            'type'         => 'call',
-            'status'       => 'pending',
+            'type' => 'call',
+            'status' => 'pending',
         ]);
     }
 
     private function leadPayload(array $overrides = []): array
     {
         return $overrides + [
-            'first_name'     => 'Rahul',
-            'last_name'      => 'Mehta',
-            'mobile_number'  => '9876543210',
-            'project_id'     => $this->project->id,
-            'source'         => 'walk_in',
-            'stage'          => 'fresh',
-            'follow_up_at'   => '2026-09-12 11:00',
+            'first_name' => 'Rahul',
+            'last_name' => 'Mehta',
+            'mobile_number' => '9876543210',
+            'project_id' => $this->project->id,
+            'source' => 'walk_in',
+            'stage' => 'fresh',
+            'follow_up_at' => '2026-09-12 11:00',
             'follow_up_type' => 'call',
         ];
     }
@@ -528,13 +571,13 @@ class AutomationEngineTest extends TestCase
     private function user(string $role, string $first): User
     {
         return User::create([
-            'first_name'    => $first,
-            'last_name'     => 'User',
-            'email'         => strtolower($first) . '@example.test',
+            'first_name' => $first,
+            'last_name' => 'User',
+            'email' => strtolower($first).'@example.test',
             'mobile_number' => (string) fake()->unique()->numberBetween(9000000000, 9999999999),
-            'role'          => $role,
-            'is_active'     => true,
-            'password'      => 'password',
+            'role' => $role,
+            'is_active' => true,
+            'password' => 'password',
         ]);
     }
 }

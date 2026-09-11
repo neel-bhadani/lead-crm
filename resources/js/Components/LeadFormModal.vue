@@ -195,26 +195,28 @@ const visitPreset = computed(() => form.stage === props.options.handoverStage)
 /*
  | The handover, and the one case this form must not warn about.
  |
- | Moving an existing lead to "Site visit scheduled" hands it from the telecaller
- | to a salesperson chosen by a round robin that does not run until this saves,
- | so the follow-up being booked lands on somebody whose name is not knowable
- | here. A warning would name the telecaller who is typing, which is the wrong
- | diary — so nothing is shown.
+ | Moving an existing lead to "Site visit scheduled" hands it to the desk that
+ | stage belongs to (`handoverRole`) whenever its owner is on another one — a
+ | salesperson picked by a round robin that does not run until this saves — so
+ | the follow-up being booked lands on somebody whose name is not knowable here.
+ | A warning would name the person holding it now, which is the wrong diary — so
+ | nothing is shown.
  |
- | A NEW lead is not affected. Creating one never hands it over, whatever stage
- | it is created at: LeadFollowUpService::onLeadCreated() files the first task
- | against the owner and runs no round robin.
+ | A NEW lead is not affected. Its owner is decided from the stage it is created
+ | at, and `defaultOwners` already names them.
  */
 const handsOver = computed(() =>
-  Boolean(props.lead) && visitPreset.value && props.lead.assigned_role === 'telecaller')
+  Boolean(props.lead) && visitPreset.value && props.lead.assigned_role !== props.options.handoverRole)
 
 /*
  | Is the person this follow-up lands on already busy at that time?
  |
  | An existing lead answers for itself; a new one is going to the owner the
- | server would pick, which is what `defaultOwnerId` is — LeadController works
- | it out with the same method store() uses, so the name in the warning is the
- | person who will actually get the lead.
+ | server would pick for the project and stage chosen, which is what
+ | `defaultOwners` holds, keyed project then stage — a salesperson comes from
+ | the project's own team. LeadController asks the same LeadAssignmentService
+ | store() does, so the name in the warning is the person who will actually get
+ | the lead.
  |
  | The lead's current pending task is excluded because this save replaces it:
  | a stage change cancels the task standing and writes the new one, so a clash
@@ -223,7 +225,9 @@ const handsOver = computed(() =>
  | A warning, nothing more — the button below is not disabled by it.
  */
 const { conflict, clear: clearConflict } = useFollowUpConflict({
-  user: () => (props.lead ? props.lead.assigned_to : props.options.defaultOwnerId),
+  user: () => (props.lead
+    ? props.lead.assigned_to
+    : props.options.defaultOwners?.[form.project_id]?.[form.stage]),
   at: () => (showFollowUp.value ? form.follow_up_at : ''),
   exclude: () => props.lead?.pending_todo?.id ?? null,
   skip: () => handsOver.value,
