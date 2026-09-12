@@ -9,8 +9,10 @@ use App\Models\ChannelPartner;
 use App\Models\Lead;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\LeadActivityRecorder;
 use App\Services\LeadAssignmentService;
 use App\Services\LeadFollowUpService;
+use App\Services\LeadTimeline;
 use App\Support\CrmTaxonomy;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -32,6 +34,8 @@ class LeadController extends Controller
     public function __construct(
         private LeadFollowUpService $service,
         private LeadAssignmentService $assignment,
+        private LeadActivityRecorder $activities,
+        private LeadTimeline $timeline,
     ) {}
 
     public function index(Request $request)
@@ -248,6 +252,10 @@ class LeadController extends Controller
                 'pendingTodo',
                 'completedTodos.completer:id,first_name,last_name',
             ]),
+            // beside `lead`, never inside it: `lead` is exactly what it was
+            // before the timeline existed, and every key the modal reads from
+            // it is where it always was
+            'timeline' => $this->timeline->for($lead),
         ]);
     }
 
@@ -260,8 +268,30 @@ class LeadController extends Controller
         $stage = $data['stage'];
         unset($data['stage']);
 
+        /*
+         | The edit and its timeline rows commit together or not at all. This
+         | transaction holds exactly what the bare update() used to write and
+         | nothing more — the stage change below still commits on its own, as
+         | it always has.
+         |
+         | The unit of a booking, or the reason for a loss, made on this same
+         | save belongs to that stage change's entry rather than being a
+         | separate edit: changeStage() records it from the saved lead.
+         */
         try {
-            $lead->update($data);
+            DB::transaction(function () use ($lead, $data, $stage, $request) {
+                $lead->update($data);
+
+                $this->activities->edits(
+                    $lead,
+                    $request->user()->id,
+                    except: $lead->stage === $stage ? [] : match ($stage) {
+                        'booking_done' => ['booked_unit'],
+                        'lost' => ['reason'],
+                        default => [],
+                    },
+                );
+            });
         } catch (UniqueConstraintViolationException $e) {
             throw $this->duplicateMobile();
         }
