@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Http\Middleware\HandleInertiaRequests;
+use App\Models\Alert;
 use App\Models\Lead;
 use App\Models\Project;
 use App\Models\Todo;
@@ -23,16 +24,18 @@ class SessionFiltersTest extends TestCase
     use RefreshDatabase;
 
     private User $admin;
+
     private User $telecaller;
+
     private Project $project;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->admin      = $this->user('admin');
+        $this->admin = $this->user('admin');
         $this->telecaller = $this->user('telecaller');
-        $this->project    = Project::create(['name' => 'Green Acres']);
+        $this->project = Project::create(['name' => 'Green Acres']);
     }
 
     /* ---------------- leads ---------------- */
@@ -41,7 +44,7 @@ class SessionFiltersTest extends TestCase
     {
         $this->actingAs($this->admin)
             ->get('/leads?search=meera&stage=connected')
-            ->assertInertia(fn(Assert $page) => $page
+            ->assertInertia(fn (Assert $page) => $page
                 ->where('filters.search', 'meera')
                 ->where('filters.stage', 'connected'))
             ->assertSessionHas('filters.leads', ['search' => 'meera', 'stage' => 'connected']);
@@ -49,7 +52,7 @@ class SessionFiltersTest extends TestCase
         // the refresh: no query string at all, same filters back
         $this->actingAs($this->admin)
             ->get('/leads')
-            ->assertInertia(fn(Assert $page) => $page
+            ->assertInertia(fn (Assert $page) => $page
                 ->where('filters.search', 'meera')
                 ->where('filters.stage', 'connected'));
     }
@@ -59,7 +62,7 @@ class SessionFiltersTest extends TestCase
         $this->actingAs($this->admin)
             ->withSession(['filters.leads' => ['search' => 'meera', 'stage' => 'connected']])
             ->get('/leads?search=&stage=connected')
-            ->assertInertia(fn(Assert $page) => $page
+            ->assertInertia(fn (Assert $page) => $page
                 ->missing('filters.search')
                 ->where('filters.stage', 'connected'));
     }
@@ -74,7 +77,7 @@ class SessionFiltersTest extends TestCase
         $this->actingAs($this->admin)
             ->withSession(['filters.leads' => ['search' => 'meera', 'stage' => 'connected']])
             ->get('/leads?reset=1&stage=connected')
-            ->assertInertia(fn(Assert $page) => $page
+            ->assertInertia(fn (Assert $page) => $page
                 ->missing('filters.search')
                 ->where('filters.stage', 'connected'))
             ->assertSessionHas('filters.leads', ['stage' => 'connected']);
@@ -94,7 +97,7 @@ class SessionFiltersTest extends TestCase
         $this->actingAs($this->admin)
             ->withSession(['filters.leads' => ['search' => 'meera', 'stage' => 'connected']])
             ->get('/leads?reset=1')
-            ->assertInertia(fn(Assert $page) => $page
+            ->assertInertia(fn (Assert $page) => $page
                 ->where('filters', ['range' => ''])
                 ->missing('filters.search')
                 ->missing('filters.stage'))
@@ -105,15 +108,15 @@ class SessionFiltersTest extends TestCase
     {
         $this->actingAs($this->admin)
             ->withSession(['filters.leads' => [
-                'stage'      => 'not-a-stage',
-                'source'     => 'not-a-source',
+                'stage' => 'not-a-stage',
+                'source' => 'not-a-source',
                 'project_id' => 'DROP TABLE leads',
-                'from'       => '2026-02-30',
-                'search'     => 'meera',
+                'from' => '2026-02-30',
+                'search' => 'meera',
             ]])
             ->get('/leads')
             ->assertOk()
-            ->assertInertia(fn(Assert $page) => $page
+            ->assertInertia(fn (Assert $page) => $page
                 ->missing('filters.stage')
                 ->missing('filters.source')
                 ->missing('filters.project_id')
@@ -124,18 +127,18 @@ class SessionFiltersTest extends TestCase
 
     public function test_the_leads_filters_still_filter(): void
     {
-        $mine   = $this->lead('Meera', 'connected', $this->telecaller);
+        $mine = $this->lead('Meera', 'connected', $this->telecaller);
         $theirs = $this->lead('Rahul', 'fresh', $this->admin);
 
         $this->actingAs($this->admin)
             ->get('/leads?stage=connected')
-            ->assertInertia(fn(Assert $page) => $page
+            ->assertInertia(fn (Assert $page) => $page
                 ->has('leads.data', 1)
                 ->where('leads.data.0.id', $mine->id));
 
         $this->actingAs($this->admin)
             ->get('/leads?reset=1&search=rahul')
-            ->assertInertia(fn(Assert $page) => $page
+            ->assertInertia(fn (Assert $page) => $page
                 ->has('leads.data', 1)
                 ->where('leads.data.0.id', $theirs->id));
     }
@@ -149,11 +152,11 @@ class SessionFiltersTest extends TestCase
         $this->actingAs($this->telecaller)
             ->withSession(['filters.leads' => ['assigned_to' => $this->admin->id]])
             ->get('/leads')
-            ->assertInertia(fn(Assert $page) => $page->has('leads.data', 0));
+            ->assertInertia(fn (Assert $page) => $page->has('leads.data', 0));
 
         $this->actingAs($this->telecaller)
             ->get('/leads?reset=1')
-            ->assertInertia(fn(Assert $page) => $page
+            ->assertInertia(fn (Assert $page) => $page
                 ->has('leads.data', 1)
                 ->where('leads.data.0.id', $mine->id));
     }
@@ -164,16 +167,16 @@ class SessionFiltersTest extends TestCase
     {
         $this->actingAs($this->admin)
             ->get('/todos')
-            ->assertInertia(fn(Assert $page) => $page->where('tab', 'today'));
+            ->assertInertia(fn (Assert $page) => $page->where('tab', 'today'));
 
         // the dashboard's follow-up panels link across with a tab parameter
         $this->actingAs($this->admin)
             ->get('/todos?tab=overdue')
-            ->assertInertia(fn(Assert $page) => $page->where('tab', 'overdue'));
+            ->assertInertia(fn (Assert $page) => $page->where('tab', 'overdue'));
 
         $this->actingAs($this->admin)
             ->get('/todos')
-            ->assertInertia(fn(Assert $page) => $page->where('tab', 'overdue'));
+            ->assertInertia(fn (Assert $page) => $page->where('tab', 'overdue'));
     }
 
     public function test_clearing_the_todo_filters_keeps_the_tab_the_user_is_on(): void
@@ -181,7 +184,7 @@ class SessionFiltersTest extends TestCase
         $this->actingAs($this->admin)
             ->withSession(['filters.todos' => ['tab' => 'completed', 'search' => 'meera', 'type' => 'call']])
             ->get('/todos?reset=1&tab=completed')
-            ->assertInertia(fn(Assert $page) => $page
+            ->assertInertia(fn (Assert $page) => $page
                 ->where('tab', 'completed')
                 ->missing('filters.search')
                 ->missing('filters.type'))
@@ -194,7 +197,7 @@ class SessionFiltersTest extends TestCase
         $this->actingAs($this->admin)
             ->withSession(['filters.todos' => ['tab' => 'upcoming', 'search' => 'meera', 'type' => 'call']])
             ->get('/todos?reset=1&tab=upcoming&type=call')
-            ->assertInertia(fn(Assert $page) => $page
+            ->assertInertia(fn (Assert $page) => $page
                 ->where('tab', 'upcoming')
                 ->missing('filters.search')
                 ->where('filters.type', 'call'));
@@ -206,30 +209,30 @@ class SessionFiltersTest extends TestCase
             ->withSession(['filters.todos' => ['tab' => 'everything', 'type' => 'telepathy']])
             ->get('/todos')
             ->assertOk()
-            ->assertInertia(fn(Assert $page) => $page
+            ->assertInertia(fn (Assert $page) => $page
                 ->where('tab', 'today')
                 ->missing('filters.type'));
     }
 
     public function test_a_telecaller_still_sees_only_their_own_todos(): void
     {
-        $mine   = $this->todo($this->telecaller);
+        $mine = $this->todo($this->telecaller);
         $theirs = $this->todo($this->admin);
 
         $this->actingAs($this->telecaller)
             ->withSession(['filters.todos' => ['assigned_to' => $this->admin->id]])
             ->get('/todos')
-            ->assertInertia(fn(Assert $page) => $page->has('todos.data', 0));
+            ->assertInertia(fn (Assert $page) => $page->has('todos.data', 0));
 
         $this->actingAs($this->telecaller)
             ->get('/todos?reset=1')
-            ->assertInertia(fn(Assert $page) => $page
+            ->assertInertia(fn (Assert $page) => $page
                 ->has('todos.data', 1)
                 ->where('todos.data.0.id', $mine->id));
 
         $this->actingAs($this->admin)
             ->get('/todos?reset=1')
-            ->assertInertia(fn(Assert $page) => $page->has('todos.data', 2));
+            ->assertInertia(fn (Assert $page) => $page->has('todos.data', 2));
 
         $this->assertNotSame($mine->id, $theirs->id);
     }
@@ -254,7 +257,7 @@ class SessionFiltersTest extends TestCase
     public function test_a_preset_clears_a_stored_custom_range(): void
     {
         $from = today()->subDays(10)->toDateString();
-        $to   = today()->toDateString();
+        $to = today()->toDateString();
 
         $this->rangeVisit("/dashboard?range=&from=$from&to=$to")
             ->assertJsonPath('props.range.key', 'custom')
@@ -269,7 +272,7 @@ class SessionFiltersTest extends TestCase
     public function test_a_reset_preset_visit_also_clears_a_stored_custom_range(): void
     {
         $from = today()->subDays(10)->toDateString();
-        $to   = today()->toDateString();
+        $to = today()->toDateString();
 
         $this->rangeVisit("/dashboard?reset=1&from=$from&to=$to")
             ->assertJsonPath('props.range.key', 'custom');
@@ -297,7 +300,82 @@ class SessionFiltersTest extends TestCase
         }
     }
 
+    /* ---------------- alerts ---------------- */
+
+    /**
+     * Marking an alert read redirects back to the address bar, and the address
+     * bar is bare /alerts — so the filters have to come back from the session.
+     */
+    public function test_the_alert_filters_survive_marking_an_alert_read(): void
+    {
+        $this->alert('urgent');
+        $this->alert('urgent', read: true);
+        $this->alert('info');
+
+        $this->actingAs($this->admin)
+            ->get('/alerts?status=unread&severity=urgent')
+            ->assertInertia(fn (Assert $page) => $page->has('alerts.data', 1))
+            ->assertSessionHas('filters.alerts', ['status' => 'unread', 'severity' => 'urgent']);
+
+        $this->actingAs($this->admin)
+            ->from('/alerts')
+            ->post(route('alerts.read-all'))
+            ->assertRedirect('/alerts');
+
+        $this->actingAs($this->admin)
+            ->get('/alerts')
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('filters', ['status' => 'unread', 'severity' => 'urgent'])
+                // read-all emptied the unread list; the filter still applies
+                ->has('alerts.data', 0));
+    }
+
+    public function test_the_automation_alerts_tab_keeps_its_own_filters(): void
+    {
+        // role:admin wants an active account, which this file's fixture is not
+        $this->admin->update(['is_active' => true]);
+
+        $this->actingAs($this->admin)
+            ->get('/automation?tab=alerts&status=unread&severity=warning')
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('tab', 'alerts')
+                ->where('filters', ['status' => 'unread', 'severity' => 'warning']));
+
+        $this->actingAs($this->admin)
+            ->get('/alerts')
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('filters', ['status' => 'all', 'severity' => 'all']));
+
+        // the refresh: the tab falls back to Rules, the alert filters do not
+        $this->actingAs($this->admin)
+            ->get('/automation')
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('tab', 'rules')
+                ->where('filters', ['status' => 'unread', 'severity' => 'warning']));
+    }
+
+    public function test_a_poisoned_alert_filter_falls_back_to_all(): void
+    {
+        $this->actingAs($this->admin)
+            ->withSession(['filters.alerts' => ['status' => 'everything', 'severity' => 'urgent']])
+            ->get('/alerts')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('filters', ['status' => 'all', 'severity' => 'urgent']));
+    }
+
     /* ---------------- fixtures ---------------- */
+
+    private function alert(string $severity, bool $read = false): Alert
+    {
+        return Alert::create([
+            'user_id' => $this->admin->id,
+            'type' => 'test',
+            'title' => 'Look',
+            'severity' => $severity,
+            'read_at' => $read ? now() : null,
+        ]);
+    }
 
     private function rangeVisit(string $url, ?array $stored = null)
     {
@@ -308,9 +386,9 @@ class SessionFiltersTest extends TestCase
         }
 
         return $test->withHeaders([
-            'X-Inertia'                 => 'true',
-            'X-Inertia-Version'         => (string) app(HandleInertiaRequests::class)->version(request()),
-            'X-Inertia-Partial-Data'    => 'range',
+            'X-Inertia' => 'true',
+            'X-Inertia-Version' => (string) app(HandleInertiaRequests::class)->version(request()),
+            'X-Inertia-Partial-Data' => 'range',
             'X-Inertia-Partial-Component' => 'Dashboard',
         ])->get($url);
     }
@@ -318,38 +396,38 @@ class SessionFiltersTest extends TestCase
     private function user(string $role): User
     {
         return User::create([
-            'first_name'    => ucfirst($role),
-            'last_name'     => 'User',
-            'email'         => "$role@example.test",
+            'first_name' => ucfirst($role),
+            'last_name' => 'User',
+            'email' => "$role@example.test",
             'mobile_number' => (string) fake()->unique()->numberBetween(9000000000, 9999999999),
-            'role'          => $role,
-            'password'      => 'password',
+            'role' => $role,
+            'password' => 'password',
         ]);
     }
 
     private function lead(string $name, string $stage, User $owner): Lead
     {
         return Lead::create([
-            'first_name'    => $name,
-            'last_name'     => 'Sharma',
+            'first_name' => $name,
+            'last_name' => 'Sharma',
             'mobile_number' => (string) fake()->unique()->numberBetween(9000000000, 9999999999),
-            'project_id'    => $this->project->id,
-            'source'        => 'walk_in',
-            'stage'         => $stage,
-            'assigned_to'   => $owner->id,
-            'created_by'    => $owner->id,
+            'project_id' => $this->project->id,
+            'source' => 'walk_in',
+            'stage' => $stage,
+            'assigned_to' => $owner->id,
+            'created_by' => $owner->id,
         ]);
     }
 
     private function todo(User $owner): Todo
     {
         return Todo::create([
-            'lead_id'      => $this->lead('Task', 'fresh', $owner)->id,
-            'assigned_to'  => $owner->id,
-            'created_by'   => $owner->id,
+            'lead_id' => $this->lead('Task', 'fresh', $owner)->id,
+            'assigned_to' => $owner->id,
+            'created_by' => $owner->id,
             'scheduled_at' => today()->setTime(10, 0),
-            'type'         => 'call',
-            'status'       => 'pending',
+            'type' => 'call',
+            'status' => 'pending',
         ]);
     }
 }

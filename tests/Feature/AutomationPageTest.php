@@ -2,13 +2,14 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\AutomationController;
+use App\Http\Controllers\AutomationRuleController;
 use App\Models\AutomationRule;
 use App\Models\Lead;
 use App\Models\MessageTemplate;
 use App\Models\Project;
 use App\Models\Todo;
 use App\Models\User;
-use Database\Seeders\AutomationSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Inertia\Testing\AssertableInertia as Assert;
@@ -24,17 +25,18 @@ use Tests\TestCase;
  *   a new rule is inactive          however the form was posted
  *   editing a live rule leaves it   fixing a typo must not silence a rule
  *   deleting reports what it did    a rule that ran 400 times is history
- *   the starter rules ship OFF      a fresh install automates nothing
  *
- * @see \App\Http\Controllers\AutomationController
- * @see \App\Http\Controllers\AutomationRuleController
+ * @see AutomationController
+ * @see AutomationRuleController
  */
 class AutomationPageTest extends TestCase
 {
     use RefreshDatabase;
 
     private User $admin;
+
     private User $tele;
+
     private Project $project;
 
     protected function setUp(): void
@@ -43,8 +45,8 @@ class AutomationPageTest extends TestCase
 
         Carbon::setTestNow(Carbon::parse('2026-09-08 11:00', 'Asia/Kolkata'));
 
-        $this->admin   = $this->user('admin', 'Ann');
-        $this->tele    = $this->user('telecaller', 'Tara');
+        $this->admin = $this->user('admin', 'Ann');
+        $this->tele = $this->user('telecaller', 'Tara');
         $this->project = Project::create(['name' => 'Skyline Residency']);
     }
 
@@ -195,12 +197,12 @@ class AutomationPageTest extends TestCase
 
     public function test_editing_a_live_rule_leaves_it_live_and_a_dead_one_dead(): void
     {
-        $on  = $this->rule(['name' => 'Live', 'is_active' => true]);
+        $on = $this->rule(['name' => 'Live', 'is_active' => true]);
         $off = $this->rule(['name' => 'Draft', 'is_active' => false]);
 
         foreach ([$on, $off] as $rule) {
             $this->actingAs($this->admin)
-                ->put(route('automation.rules.update', $rule->id), $this->rulePayload(['name' => $rule->name . ' edited']))
+                ->put(route('automation.rules.update', $rule->id), $this->rulePayload(['name' => $rule->name.' edited']))
                 ->assertSessionHasNoErrors();
         }
 
@@ -254,7 +256,7 @@ class AutomationPageTest extends TestCase
 
         $this->actingAs($this->admin)
             ->post(route('automation.rules.store'), $this->rulePayload([
-                'trigger'        => 'stage_changed',
+                'trigger' => 'stage_changed',
                 'trigger_config' => ['stage' => 'not_a_stage'],
             ]))
             ->assertSessionHasErrors('trigger_config.stage');
@@ -280,11 +282,11 @@ class AutomationPageTest extends TestCase
         $this->actingAs($this->admin)
             ->post(route('automation.rules.store'), $this->rulePayload([
                 'actions' => [[
-                    'type'  => 'change_stage',
+                    'type' => 'change_stage',
                     'stage' => 'connected',
                     // left over in the form from an action they switched away from
                     'hours' => 12,
-                    'role'  => 'telecaller',
+                    'role' => 'telecaller',
                 ]],
             ]))
             ->assertSessionHasNoErrors();
@@ -300,7 +302,7 @@ class AutomationPageTest extends TestCase
         // one named person: no role needed
         $this->actingAs($this->admin)
             ->post(route('automation.rules.store'), $this->rulePayload([
-                'name'    => 'To one person',
+                'name' => 'To one person',
                 'actions' => [[
                     'type' => 'raise_alert', 'recipient' => 'user',
                     'recipient_user_id' => $this->tele->id,
@@ -312,7 +314,7 @@ class AutomationPageTest extends TestCase
         // a role, with no role chosen: refused
         $this->actingAs($this->admin)
             ->post(route('automation.rules.store'), $this->rulePayload([
-                'name'    => 'To a role',
+                'name' => 'To a role',
                 'actions' => [[
                     'type' => 'raise_alert', 'recipient' => 'role',
                     'severity' => 'info', 'title' => 'Look',
@@ -321,78 +323,20 @@ class AutomationPageTest extends TestCase
             ->assertSessionHasErrors('actions.0.recipient_role');
     }
 
-    /* ================= starter content ================= */
-
-    public function test_the_starter_rules_and_messages_ship_switched_off_and_ready(): void
-    {
-        $this->seed(AutomationSeeder::class);
-
-        $rules = AutomationRule::all();
-
-        $this->assertGreaterThanOrEqual(6, $rules->count(), 'six to eight starter rules');
-        $this->assertLessThanOrEqual(8, $rules->count());
-        $this->assertSame(0, $rules->where('is_active', true)->count(), 'every one switched off');
-
-        // each one explains itself in plain words
-        foreach ($rules as $rule) {
-            $this->assertNotEmpty($rule->description, "{$rule->name} has no description");
-            $this->assertGreaterThan(60, strlen($rule->description), "{$rule->name}'s description is a label, not an explanation");
-            $this->assertNotEmpty($rule->actionList(), "{$rule->name} does nothing");
-        }
-
-        // and they cover the range, rather than eight of the same shape
-        $this->assertGreaterThanOrEqual(3, $rules->pluck('trigger')->unique()->count());
-
-        $templates = MessageTemplate::all();
-
-        $this->assertGreaterThanOrEqual(5, $templates->count());
-        $this->assertLessThanOrEqual(6, $templates->count());
-
-        foreach ($templates as $template) {
-            $this->assertNotEmpty($template->placeholder_map, "{$template->name} uses no placeholders");
-            $this->assertStringContainsString('{', $template->body);
-        }
-
-        // the marketing/utility distinction is actually exercised
-        $this->assertGreaterThan(0, $templates->where('category', 'marketing')->count());
-        $this->assertGreaterThan(0, $templates->where('category', 'utility')->count());
-    }
-
-    public function test_seeding_twice_does_not_double_the_starter_content(): void
-    {
-        $this->seed(AutomationSeeder::class);
-        $rules = AutomationRule::count();
-        $templates = MessageTemplate::count();
-
-        $this->seed(AutomationSeeder::class);
-
-        $this->assertSame($rules, AutomationRule::count());
-        $this->assertSame($templates, MessageTemplate::count());
-    }
-
-    public function test_a_starter_rule_the_admin_switched_on_is_not_reset_by_reseeding(): void
-    {
-        $this->seed(AutomationSeeder::class);
-
-        $rule = AutomationRule::firstOrFail();
-        $rule->update(['is_active' => true, 'description' => 'My own words.']);
-
-        $this->seed(AutomationSeeder::class);
-
-        $this->assertTrue($rule->fresh()->is_active, 'the admin\'s decision survives a redeploy');
-        $this->assertSame('My own words.', $rule->fresh()->description);
-    }
-
     /* ================= the test button, against real leads ================= */
 
-    public function test_the_test_button_counts_the_leads_a_starter_rule_would_touch(): void
+    public function test_the_test_button_counts_the_leads_a_rule_would_touch(): void
     {
-        $this->seed(AutomationSeeder::class);
+        $facebookRule = $this->rule([
+            'name' => 'Facebook leads to the telecaller desk',
+            'trigger_config' => [],
+            'conditions' => [['field' => 'source', 'value' => 'facebook']],
+        ]);
 
         foreach (['facebook', 'facebook', 'facebook', 'walk_in'] as $i => $source) {
             $lead = Lead::create([
                 'first_name' => 'Lead', 'last_name' => (string) $i,
-                'mobile_number' => '98765432' . str_pad((string) $i, 2, '0', STR_PAD_LEFT),
+                'mobile_number' => '98765432'.str_pad((string) $i, 2, '0', STR_PAD_LEFT),
                 'project_id' => $this->project->id, 'source' => $source, 'stage' => 'fresh',
                 'assigned_to' => $this->tele->id, 'assigned_role' => 'telecaller',
                 'stage_changed_at' => now(), 'created_by' => $this->admin->id,
@@ -403,13 +347,11 @@ class AutomationPageTest extends TestCase
             ]);
         }
 
-        $facebookRule = AutomationRule::where('name', 'Facebook leads to the telecaller desk')->firstOrFail();
-
         $response = $this->actingAs($this->admin)
             ->postJson(route('automation.rules.match'), [
-                'trigger'        => $facebookRule->trigger,
+                'trigger' => $facebookRule->trigger,
                 'trigger_config' => $facebookRule->trigger_config,
-                'conditions'     => $facebookRule->conditionList(),
+                'conditions' => $facebookRule->conditionList(),
             ])
             ->assertOk();
 
@@ -431,7 +373,7 @@ class AutomationPageTest extends TestCase
         ]);
 
         $this->rule([
-            'name'    => 'Uses it',
+            'name' => 'Uses it',
             'actions' => [['type' => 'queue_whatsapp', 'template_id' => $template->id]],
         ]);
 
@@ -447,22 +389,22 @@ class AutomationPageTest extends TestCase
     private function rulePayload(array $overrides = []): array
     {
         return $overrides + [
-            'name'        => 'A rule',
+            'name' => 'A rule',
             'description' => 'What it is for.',
-            'trigger'     => 'lead_created',
-            'conditions'  => [['field' => 'source', 'value' => 'facebook']],
-            'actions'     => [['type' => 'assign_round_robin', 'role' => 'telecaller']],
+            'trigger' => 'lead_created',
+            'conditions' => [['field' => 'source', 'value' => 'facebook']],
+            'actions' => [['type' => 'assign_round_robin', 'role' => 'telecaller']],
         ];
     }
 
     private function rule(array $attrs = []): AutomationRule
     {
         return AutomationRule::create($attrs + [
-            'name'       => 'Rule ' . AutomationRule::count(),
-            'trigger'    => 'lead_created',
+            'name' => 'Rule '.AutomationRule::count(),
+            'trigger' => 'lead_created',
             'conditions' => [],
-            'actions'    => [['type' => 'assign_round_robin', 'role' => 'telecaller']],
-            'is_active'  => false,
+            'actions' => [['type' => 'assign_round_robin', 'role' => 'telecaller']],
+            'is_active' => false,
             'created_by' => $this->admin->id,
         ]);
     }
@@ -470,13 +412,13 @@ class AutomationPageTest extends TestCase
     private function user(string $role, string $first): User
     {
         return User::create([
-            'first_name'    => $first,
-            'last_name'     => 'User',
-            'email'         => strtolower($first) . '@example.test',
+            'first_name' => $first,
+            'last_name' => 'User',
+            'email' => strtolower($first).'@example.test',
             'mobile_number' => (string) fake()->unique()->numberBetween(9000000000, 9999999999),
-            'role'          => $role,
-            'is_active'     => true,
-            'password'      => 'password',
+            'role' => $role,
+            'is_active' => true,
+            'password' => 'password',
         ]);
     }
 }

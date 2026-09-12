@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { Link, router } from '@inertiajs/vue3'
+import { useFilterVisit } from '@/composables/useFilterVisit.js'
 
 /*
  | The alerts list, rendered once and used twice: the /alerts page every user
@@ -40,14 +41,12 @@ const tone = severity => ({
   warning: { dot: 'bg-amber-500', chip: 'bg-amber-50 text-amber-800 border-amber-200', label: 'Warning' },
 }[severity] ?? { dot: 'bg-slate-300', chip: 'bg-slate-50 text-slate-600 border-slate-200', label: 'Info' })
 
-const go = params => router.get(route(props.routeName, { ...props.routeParams, ...params }), {}, {
-  preserveScroll: true,
-  preserveState: true,
-  replace: true,
-})
+// the same filter visit as every other list page: the filters go to the server,
+// which keeps them in the session, and then come back out of the address bar
+const { visit } = useFilterVisit(route(props.routeName, props.routeParams))
 
-const setStatus = status => go({ ...props.filters, status })
-const setSeverity = severity => go({ ...props.filters, severity })
+const setStatus = status => visit({ ...props.filters, status })
+const setSeverity = severity => visit({ ...props.filters, severity })
 
 const openAlert = alert => router.post(route('alerts.read', alert.id), {}, { preserveScroll: true })
 

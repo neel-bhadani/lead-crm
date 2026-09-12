@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { Link, router, useForm } from '@inertiajs/vue3'
 import axios from 'axios'
 import AppLayout from '../../Layouts/AppLayout.vue'
@@ -10,6 +10,7 @@ import HelpTip from '../../Components/HelpTip.vue'
 import RuleFormModal from '../../Components/RuleFormModal.vue'
 import TemplateFormModal from '../../Components/TemplateFormModal.vue'
 import { rulePhrase } from '../../lib/rulePhrase.js'
+import { useFilterVisit } from '../../composables/useFilterVisit.js'
 
 /*
  | The Automation page. Five tabs, one payload.
@@ -19,10 +20,12 @@ import { rulePhrase } from '../../lib/rulePhrase.js'
  | messages — and the alternative is five spinners on a page whose entire
  | purpose is letting somebody see how the pieces fit together.
  |
- | Tabs are switched in the browser and the URL is rewritten to match, without
- | a round trip. The URL matters because things link INTO a tab: the alert
- | raised when loop protection holds a rule back points at ?tab=activity, and
- | that has to land on the activity log rather than on the rules list.
+ | Tabs are switched in the browser, without a round trip, and the address bar
+ | stays /automation. A tab parameter is still honoured on the way in, because
+ | things link INTO a tab: the alert raised when loop protection holds a rule
+ | back points at ?tab=activity, and that has to land on the activity log rather
+ | than on the rules list. The server reads it, and it is wiped once the page
+ | mounts — the same as a filter arriving on a link to any other list page.
  */
 const props = defineProps({
   tab: String,
@@ -52,14 +55,8 @@ const TABS = [
 
 const tab = ref(props.tab ?? 'rules')
 
-watch(tab, key => {
-  const url = new URL(window.location.href)
-
-  url.searchParams.set('tab', key)
-  // replaceState, not an Inertia visit: everything is already on the page, and
-  // a real navigation would throw away the filters on the alerts tab
-  window.history.replaceState({}, '', url)
-})
+// no visit of its own: this is here for the clean address bar on arrival
+useFilterVisit(route('automation.index'))
 
 const badge = key => ({
   rules: props.rules.length,

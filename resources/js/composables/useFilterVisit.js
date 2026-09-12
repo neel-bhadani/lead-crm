@@ -1,4 +1,4 @@
-import { nextTick, onMounted, watch } from 'vue'
+import { nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { router } from '@inertiajs/vue3'
 import { cleanUrl } from '../lib/cleanUrl.js'
 import { withoutEmpty } from '../lib/withoutEmpty.js'
@@ -29,6 +29,15 @@ export function useFilterVisit(url, keep = []) {
     const clean = () => cleanUrl(base, keep)
 
     onMounted(clean)
+
+    /*
+     | A full page load needs a second pass. The page mounts before Inertia has
+     | written its first history entry, and that write puts the query string
+     | straight back — so a link opened in a new tab kept its `?tab=`. Inertia
+     | fires `navigate` once the entry is written, and cleaning there sticks.
+     */
+    const stopListening = router.on('navigate', clean)
+    onUnmounted(stopListening)
 
     const visit = (params, options = {}) =>
         router.get(url, withoutEmpty(params), {

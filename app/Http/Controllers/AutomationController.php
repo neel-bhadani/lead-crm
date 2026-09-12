@@ -49,18 +49,18 @@ class AutomationController extends Controller
             : 'rules';
 
         return Inertia::render('Automation/Index', [
-            'tab'       => $tab,
-            'rules'     => $this->rules(),
+            'tab' => $tab,
+            'rules' => $this->rules(),
             'templates' => $this->templates(),
-            'queue'     => $this->queue(),
-            'activity'  => $this->activity(),
-            'catalog'   => $this->catalogue->payload(),
-            'whatsapp'  => $this->whatsappCard(),
+            'queue' => $this->queue(),
+            'activity' => $this->activity(),
+            'catalog' => $this->catalogue->payload(),
+            'whatsapp' => $this->whatsappCard(),
             'placeholders' => $this->renderer->placeholders(),
-            'categories'   => config('automation.whatsapp.categories'),
-            'thresholds'   => config('crm.alerts'),
+            'categories' => config('automation.whatsapp.categories'),
+            'thresholds' => config('crm.alerts'),
             'schedulerRunning' => $this->schedulerRunning(),
-        ] + $this->alertList($request, $request->user()));
+        ] + $this->alertList($request, $request->user(), 'automation-alerts'));
     }
 
     /**
@@ -74,13 +74,13 @@ class AutomationController extends Controller
     public function guide()
     {
         return Inertia::render('Automation/Guide', [
-            'triggers'   => config('automation.triggers'),
+            'triggers' => config('automation.triggers'),
             'conditions' => config('automation.conditions'),
-            'actions'    => config('automation.actions'),
+            'actions' => config('automation.actions'),
             'categories' => config('automation.whatsapp.categories'),
             'thresholds' => config('crm.alerts'),
-            'loop'       => config('automation.loop_protection'),
-            'whatsapp'   => $this->whatsappCard(),
+            'loop' => config('automation.loop_protection'),
+            'whatsapp' => $this->whatsappCard(),
         ]);
     }
 
@@ -101,8 +101,8 @@ class AutomationController extends Controller
     {
         $data = $request->validate([
             'phone_number_id' => ['nullable', 'string', 'max:80'],
-            'access_token'    => ['nullable', 'string', 'max:500'],
-            'auto_send'       => ['boolean'],
+            'access_token' => ['nullable', 'string', 'max:500'],
+            'auto_send' => ['boolean'],
         ]);
 
         $integration = $this->whatsapp->integration();
@@ -142,21 +142,21 @@ class AutomationController extends Controller
             ->orderBy('name')
             ->get()
             ->map(fn (AutomationRule $rule) => [
-                'id'             => $rule->id,
-                'name'           => $rule->name,
-                'description'    => $rule->description,
-                'trigger'        => $rule->trigger,
+                'id' => $rule->id,
+                'name' => $rule->name,
+                'description' => $rule->description,
+                'trigger' => $rule->trigger,
                 'trigger_config' => $rule->trigger_config ?? [],
-                'conditions'     => $rule->conditionList(),
-                'actions'        => $rule->actionList(),
-                'is_active'      => $rule->is_active,
-                'fire_count'     => $rule->fire_count,
-                'last_fired_at'  => $rule->last_fired_at?->toIso8601String(),
-                'created_by'     => $rule->creator?->display_name,
+                'conditions' => $rule->conditionList(),
+                'actions' => $rule->actionList(),
+                'is_active' => $rule->is_active,
+                'fire_count' => $rule->fire_count,
+                'last_fired_at' => $rule->last_fired_at?->toIso8601String(),
+                'created_by' => $rule->creator?->display_name,
                 // the save-time warning, recomputed on read so a rule written
                 // before the check existed still shows it
-                'could_loop'     => $rule->couldLoop(),
-                'is_time_based'  => config("automation.triggers.{$rule->trigger}.kind") === 'time',
+                'could_loop' => $rule->couldLoop(),
+                'is_time_based' => config("automation.triggers.{$rule->trigger}.kind") === 'time',
             ])
             ->all();
     }
@@ -167,20 +167,20 @@ class AutomationController extends Controller
             ->orderBy('name')
             ->get()
             ->map(fn (MessageTemplate $t) => [
-                'id'               => $t->id,
-                'name'             => $t->name,
-                'category'         => $t->category,
-                'body'             => $t->body,
-                'placeholder_map'  => $t->placeholder_map ?? [],
+                'id' => $t->id,
+                'name' => $t->name,
+                'category' => $t->category,
+                'body' => $t->body,
+                'placeholder_map' => $t->placeholder_map ?? [],
                 // what Meta would be sent, shown read-only so the numbering is
                 // not a surprise the week somebody submits a template
-                'meta_body'        => $this->renderer->toMetaBody($t->body, $t->placeholder_map),
+                'meta_body' => $this->renderer->toMetaBody($t->body, $t->placeholder_map),
                 'meta_template_name' => $t->meta_template_name,
-                'approval_status'  => $t->approval_status,
-                'is_active'        => $t->is_active,
-                'messages_count'   => $t->messages_count,
-                'preview'          => $this->renderer->preview($t->body),
-                'cost_note'        => $t->costNote(),
+                'approval_status' => $t->approval_status,
+                'is_active' => $t->is_active,
+                'messages_count' => $t->messages_count,
+                'preview' => $this->renderer->preview($t->body),
+                'cost_note' => $t->costNote(),
             ])
             ->all();
     }
@@ -196,30 +196,30 @@ class AutomationController extends Controller
     private function queue(): array
     {
         return MessageLog::with([
-                'lead:id,first_name,middle_name,last_name,mobile_number,assigned_to',
-                'template:id,name,category',
-                'rule:id,name',
-                'user:id,first_name,last_name',
-            ])
+            'lead:id,first_name,middle_name,last_name,mobile_number,assigned_to',
+            'template:id,name,category',
+            'rule:id,name',
+            'user:id,first_name,last_name',
+        ])
             ->latest('id')
             ->limit((int) config('automation.queue_limit', 100))
             ->get()
             ->map(fn (MessageLog $m) => [
-                'id'        => $m->id,
-                'status'    => $m->status,
-                'mode'      => $m->mode,
-                'body'      => $m->body,
+                'id' => $m->id,
+                'status' => $m->status,
+                'mode' => $m->mode,
+                'body' => $m->body,
                 'to_number' => $m->to_number,
-                'error'     => $m->error,
-                'sent_at'   => $m->sent_at?->toIso8601String(),
-                'created_at'=> $m->created_at?->toIso8601String(),
-                'lead'      => $m->lead ? [
-                    'id'   => $m->lead->id,
+                'error' => $m->error,
+                'sent_at' => $m->sent_at?->toIso8601String(),
+                'created_at' => $m->created_at?->toIso8601String(),
+                'lead' => $m->lead ? [
+                    'id' => $m->lead->id,
                     'name' => $m->lead->full_name,
                 ] : null,
-                'template'  => $m->template?->name,
-                'rule'      => $m->rule?->name,
-                'user'      => $m->user?->display_name,
+                'template' => $m->template?->name,
+                'rule' => $m->rule?->name,
+                'user' => $m->user?->display_name,
                 // built server-side so the browser never has to know the
                 // country code or the encoding rules
                 'click_url' => $m->status === 'queued' ? $this->whatsapp->clickUrlFor($m) : null,
@@ -234,14 +234,14 @@ class AutomationController extends Controller
             ->limit((int) config('automation.log_limit', 100))
             ->get()
             ->map(fn (AutomationLog $log) => [
-                'id'       => $log->id,
-                'rule'     => $log->rule?->name ?? 'A deleted rule',
-                'lead'     => $log->lead?->full_name,
-                'action'   => $log->action,
-                'result'   => $log->result,
-                'error'    => $log->error,
+                'id' => $log->id,
+                'rule' => $log->rule?->name ?? 'A deleted rule',
+                'lead' => $log->lead?->full_name,
+                'action' => $log->action,
+                'result' => $log->result,
+                'error' => $log->error,
                 'fired_at' => $log->fired_at?->toIso8601String(),
-                'bad'      => $log->isBad(),
+                'bad' => $log->isBad(),
             ])
             ->all();
     }
@@ -258,11 +258,11 @@ class AutomationController extends Controller
         $integration = $this->whatsapp->integration();
 
         return [
-            'configured'       => $this->whatsapp->isConfigured(),
-            'auto_send'        => $this->whatsapp->autoSends(),
-            'phone_number_id'  => $integration->setting('phone_number_id'),
-            'access_token_tail'=> $integration->maskedSetting('access_token'),
-            'not_configured'   => WhatsAppSender::NOT_CONFIGURED,
+            'configured' => $this->whatsapp->isConfigured(),
+            'auto_send' => $this->whatsapp->autoSends(),
+            'phone_number_id' => $integration->setting('phone_number_id'),
+            'access_token_tail' => $integration->maskedSetting('access_token'),
+            'not_configured' => WhatsAppSender::NOT_CONFIGURED,
         ];
     }
 
