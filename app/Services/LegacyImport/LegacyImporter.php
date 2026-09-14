@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use RuntimeException;
+use Throwable;
 
 /**
  * Writes a LegacyImportPlan into the database.
@@ -34,24 +35,40 @@ use RuntimeException;
  * is set explicitly from the JSON. Reference rows (projects, users, sources,
  * partners) are dated the day they first appear in the sheet, so nothing this
  * writes carries today's date.
+ *
+ * Idempotency, table by table — every one keyed on something already in the
+ * plan or the schema, never guessed at insert time:
+ *   - leads:    lead_import_records, unique(source_file, source_row)
+ *   - todos:    todo_import_records, unique(source_file, source_row, source_column)
+ *   - users:    email
+ *   - projects: name (case-insensitive, trimmed)
+ *   - partners: name_key + type (the DB's own unique index)
+ *   - sources:  key, in lead_sources
+ * A second run of writeReferenceData()/writeGroups() finds every one of these
+ * already there and writes nothing new.
  */
 class LegacyImporter
 {
     public const TRIPWIRE_TABLES = ['lead_activities', 'alerts', 'automation_logs', 'message_logs'];
 
-    private const RECORD_TABLE = 'lead_import_records';
+    private const LEAD_RECORD_TABLE = 'lead_import_records';
+
+    private const TODO_RECORD_TABLE = 'todo_import_records';
 
     /** @var array<string, int> project key => id */
     private array $projectIds = [];
 
-    /** @var array<string, array{id: int, role: string, is_active: bool}> user name (or ADMIN) => user */
+    /** @var array<string, array{id: int, role: string, is_active: bool}> user name => user */
     private array $users = [];
 
     /** @var array<string, int> name_key => id */
     private array $partnerIds = [];
 
-    /** @var array<int, true> source rows already recorded */
+    /** @var array<string, true> "{source_file}:{source_row}" already in lead_import_records */
     private array $importedRows = [];
+
+    /** @var array<string, true> "{source_file}:{source_row}:{source_column}" already in todo_import_records */
+    private array $importedTodoRows = [];
 
     /**
      * @var array{
@@ -85,7 +102,7 @@ class LegacyImporter
     public function preflight(bool $assumeFresh = false): array
     {
         $errors = [];
-        $warnings = [];
+        $warnings = $this->plan->warnings;
         $blockers = [];
         $checks = [];
 
@@ -95,8 +112,10 @@ class LegacyImporter
             $blockers[] = 'Run `php artisan migrate` first: '.implode(', ', $pending);
         }
 
-        $hasRecordTable = Schema::hasTable(self::RECORD_TABLE);
-        $checks['lead_import_records table'] = $hasRecordTable ? 'exists' : 'missing (created by migration)';
+        $hasLeadRecordTable = Schema::hasTable(self::LEAD_RECORD_TABLE);
+        $hasTodoRecordTable = Schema::hasTable(self::TODO_RECORD_TABLE);
+        $checks['lead_import_records / todo_import_records tables'] = ($hasLeadRecordTable ? 'exist' : 'missing').
+            ($hasLeadRecordTable === $hasTodoRecordTable ? '' : ' (mismatched — migrate first)');
 
         $mobileNullable = (bool) (collect(Schema::getColumns('leads'))->firstWhere('name', 'mobile_number')['nullable'] ?? false);
         $nullMobiles = count(array_filter(array_column(array_column($this->plan->groups, 'lead'), 'mobile_number'), 'is_null'));
@@ -109,21 +128,6 @@ class LegacyImporter
         }
 
         $checks['Timezone'] = (string) config('app.timezone');
-
-        /* ---------------- admin fallback ---------------- */
-
-        $admin = DB::table('users')->where('role', 'admin')->where('is_active', true)
-            ->whereNull('deleted_at')->orderBy('id')->first(['id', 'first_name', 'last_name', 'role', 'is_active']);
-        $needsAdmin = in_array(LegacyImportPlan::ADMIN, array_merge(
-            array_column(array_column($this->plan->groups, 'lead'), 'owner_name'),
-            array_column(array_merge(...array_column($this->plan->groups, 'todos') ?: [[]]), 'owner_name'),
-        ), true);
-        if ($admin) {
-            $this->users[LegacyImportPlan::ADMIN] = ['id' => $admin->id, 'role' => $admin->role, 'is_active' => true];
-            $checks['Admin for unassigned leads'] = "#{$admin->id} {$admin->first_name} {$admin->last_name}";
-        } elseif ($needsAdmin) {
-            $errors[] = 'Some leads have no assigned user and there is no active admin to give them to.';
-        }
 
         /* ---------------- stages, sources, lost reasons ---------------- */
 
@@ -155,7 +159,11 @@ class LegacyImporter
 
         $projects = ['create' => [], 'reuse' => []];
         foreach ($this->plan->projects as $key => $project) {
-            $id = DB::table('projects')->whereNull('deleted_at')->where('name', $project['name'])->orderBy('id')->value('id');
+            // name matched case-insensitively and trimmed — never assume a
+            // project the client renamed by a letter's case is a new one
+            $id = DB::table('projects')->whereNull('deleted_at')
+                ->whereRaw('LOWER(TRIM(name)) = ?', [Str::lower(trim($project['name']))])
+                ->orderBy('id')->value('id');
             if ($id) {
                 $this->projectIds[$key] = (int) $id;
                 $projects['reuse'][] = "{$project['name']} (#{$id})";
@@ -166,13 +174,14 @@ class LegacyImporter
 
         $users = ['create' => [], 'reuse' => []];
         foreach ($this->plan->users as $name => $user) {
-            $found = DB::table('users')->whereNull('deleted_at')->where('email', $user['email'])->first()
-                ?? DB::table('users')->whereNull('deleted_at')
-                    ->where('first_name', $user['first_name'])->where('last_name', $user['last_name'])
-                    ->orderBy('id')->first();
+            // email only — a name match could land on someone the client
+            // already renamed or reassigned, and this may not touch them
+            $found = DB::table('users')->whereNull('deleted_at')->where('email', $user['email'])
+                ->first(['id', 'role', 'is_active', 'first_name', 'last_name']);
             if ($found) {
                 $this->users[$name] = ['id' => $found->id, 'role' => $found->role, 'is_active' => (bool) $found->is_active];
-                $users['reuse'][] = "{$name} (#{$found->id}, ".($found->is_active ? 'ACTIVE — left as it is' : 'inactive').')';
+                $users['reuse'][] = "{$name} (#{$found->id}, left as it is: role={$found->role}, "
+                    .($found->is_active ? 'active' : 'inactive').')';
             } else {
                 $users['create'][] = "{$name} <{$user['email']}>";
             }
@@ -180,11 +189,19 @@ class LegacyImporter
 
         $partners = ['create' => 0, 'reuse' => 0];
         foreach (array_keys($this->plan->partners) as $nameKey) {
-            $id = DB::table('channel_partners')->whereNull('deleted_at')
-                ->where('name_key', $nameKey)->where('type', 'broker')->value('id');
-            if ($id) {
-                $this->partnerIds[$nameKey] = (int) $id;
+            $existing = DB::table('channel_partners')->whereNull('deleted_at')
+                ->where('name_key', $nameKey)->where('type', 'broker')
+                ->first(['id', 'phone', 'alt_phone']);
+            if ($existing) {
+                $this->partnerIds[$nameKey] = (int) $existing->id;
                 $partners['reuse']++;
+                $planned = array_filter([$this->plan->partners[$nameKey]['phone'], $this->plan->partners[$nameKey]['alt_phone']]);
+                $onFile = array_filter([$existing->phone, $existing->alt_phone]);
+                if ($planned !== [] && $onFile !== [] && array_intersect($planned, $onFile) === []) {
+                    $warnings[] = "Channel partner '{$nameKey}' already exists (#{$existing->id}) with phone "
+                        .implode('/', $onFile)." — the import's own number(s) (".implode('/', $planned).') do not '
+                        .'match. Reusing the existing row (the unique index allows only one); confirm by hand this is the same person.';
+                }
             } else {
                 $partners['create']++;
             }
@@ -196,21 +213,28 @@ class LegacyImporter
         /* ---------------- what was imported before ---------------- */
 
         $this->importedRows = [];
-        if ($hasRecordTable && ! $assumeFresh) {
-            $this->importedRows = array_fill_keys(
-                DB::table(self::RECORD_TABLE)->where('source_file', LegacyImportPlan::SOURCE_FILE)->pluck('source_row')->all(),
-                true,
-            );
+        $this->importedTodoRows = [];
+        if ($hasLeadRecordTable && ! $assumeFresh) {
+            DB::table(self::LEAD_RECORD_TABLE)->select(['source_file', 'source_row'])
+                ->orderBy('id')->each(function ($r) {
+                    $this->importedRows["{$r->source_file}:{$r->source_row}"] = true;
+                });
+        }
+        if ($hasTodoRecordTable && ! $assumeFresh) {
+            DB::table(self::TODO_RECORD_TABLE)->select(['source_file', 'source_row', 'source_column'])
+                ->orderBy('id')->each(function ($r) {
+                    $this->importedTodoRows["{$r->source_file}:{$r->source_row}:{$r->source_column}"] = true;
+                });
         }
 
         $alreadyImported = 0;
         foreach ($this->plan->groups as $group) {
-            $rows = array_column($group['records'], 'source_row');
-            $done = count(array_filter($rows, fn (int $row) => isset($this->importedRows[$row])));
-            if ($done === count($rows)) {
+            $keys = array_map(fn (array $r) => "{$r['source_file']}:{$r['source_row']}", $group['records']);
+            $done = count(array_filter($keys, fn (string $k) => isset($this->importedRows[$k])));
+            if ($done === count($keys)) {
                 $alreadyImported++;
             } elseif ($done > 0) {
-                $errors[] = "Lead group of row {$group['survivor_row']} is partly imported ({$done} of ".count($rows)
+                $errors[] = "Lead group of row {$group['survivor_row']} is partly imported ({$done} of ".count($keys)
                     .' rows). The JSON has changed since the last run — use --fresh.';
             }
         }
@@ -264,8 +288,8 @@ class LegacyImporter
         }
 
         // leads an earlier run wrote are skipped, or deleted first by --fresh
-        $ours = Schema::hasTable(self::RECORD_TABLE)
-            ? DB::table(self::RECORD_TABLE)->where('source_file', LegacyImportPlan::SOURCE_FILE)->pluck('lead_id')->flip()->all()
+        $ours = Schema::hasTable(self::LEAD_RECORD_TABLE)
+            ? DB::table(self::LEAD_RECORD_TABLE)->pluck('lead_id')->flip()->all()
             : [];
 
         $errors = [];
@@ -310,20 +334,61 @@ class LegacyImporter
      ==================================================================== */
 
     /**
-     * Projects, users, sources and channel partners, each only if missing.
+     * Projects, users, sources and channel partners, each only if missing —
+     * never touching a row preflight() already found. Each row is inserted
+     * on its own (not one giant transaction) so one bad row cannot take
+     * fourteen good ones down with it; a failure is counted, not thrown.
      *
-     * @return array{projects: int, users: int, sources: int, partners: int}
+     * @return array<string, array{created: int, skipped: int, failed: int, source_count: int}>
      */
     public function writeReferenceData(): array
     {
         $this->requirePreflight();
-        $created = ['projects' => 0, 'users' => 0, 'sources' => 0, 'partners' => 0];
+        // Users, projects, sources/stages/lost reasons, channel partners —
+        // the order the brief asks for. None of the four depends on another
+        // (all are independent of each other; only leads depend on all
+        // four), so this is a reporting order, not a correctness one.
+        $stats = [
+            'users' => ['created' => 0, 'skipped' => 0, 'failed' => 0, 'source_count' => count($this->plan->users)],
+            'projects' => ['created' => 0, 'skipped' => 0, 'failed' => 0, 'source_count' => count($this->plan->projects)],
+            'sources' => ['created' => 0, 'skipped' => 0, 'failed' => 0, 'source_count' => count($this->plan->sourcesUsed)],
+            'partners' => ['created' => 0, 'skipped' => 0, 'failed' => 0, 'source_count' => count($this->plan->partners)],
+        ];
 
-        DB::transaction(function () use (&$created) {
-            foreach ($this->plan->projects as $key => $project) {
-                if (isset($this->projectIds[$key])) {
-                    continue;
-                }
+        foreach ($this->plan->users as $name => $user) {
+            if (isset($this->users[$name])) {
+                $stats['users']['skipped']++;
+
+                continue;
+            }
+            try {
+                $id = DB::table('users')->insertGetId([
+                    'first_name' => $user['first_name'],
+                    'last_name' => $user['last_name'],
+                    'email' => $user['email'],
+                    // nobody knows this, so nobody can sign in with it
+                    'password' => Hash::make(Str::random(64)),
+                    'role' => $user['role'],
+                    'is_active' => false,
+                    'approval_status' => 'approved',
+                    'created_at' => $user['first_seen'],
+                    'updated_at' => $user['first_seen'],
+                ]);
+                $this->users[$name] = ['id' => $id, 'role' => $user['role'], 'is_active' => false];
+                $stats['users']['created']++;
+            } catch (Throwable $e) {
+                $stats['users']['failed']++;
+                $this->plan->warnings[] = "User '{$name}' failed to insert: {$e->getMessage()}";
+            }
+        }
+
+        foreach ($this->plan->projects as $key => $project) {
+            if (isset($this->projectIds[$key])) {
+                $stats['projects']['skipped']++;
+
+                continue;
+            }
+            try {
                 $this->projectIds[$key] = DB::table('projects')->insertGetId([
                     'name' => $project['name'],
                     'type' => 'residential',
@@ -331,34 +396,21 @@ class LegacyImporter
                     'created_at' => $project['first_seen'],
                     'updated_at' => $project['first_seen'],
                 ]);
-                $created['projects']++;
+                $stats['projects']['created']++;
+            } catch (Throwable $e) {
+                $stats['projects']['failed']++;
+                $this->plan->warnings[] = "Project '{$project['name']}' failed to insert: {$e->getMessage()}";
             }
+        }
 
-            foreach ($this->plan->users as $name => $user) {
-                if (isset($this->users[$name])) {
-                    continue;
-                }
-                $id = DB::table('users')->insertGetId([
-                    'first_name' => $user['first_name'],
-                    'last_name' => $user['last_name'],
-                    'email' => $user['email'],
-                    // nobody knows this, so nobody can sign in with it
-                    'password' => Hash::make(Str::random(64)),
-                    'role' => 'salesperson',
-                    'is_active' => false,
-                    'approval_status' => 'approved',
-                    'created_at' => $user['first_seen'],
-                    'updated_at' => $user['first_seen'],
-                ]);
-                $this->users[$name] = ['id' => $id, 'role' => 'salesperson', 'is_active' => false];
-                $created['users']++;
+        $sortOrder = (int) DB::table('lead_sources')->max('sort_order');
+        foreach ($this->plan->sourcesUsed as $key) {
+            if (! in_array($key, $this->preflight['sources']['create'], true)) {
+                $stats['sources']['skipped']++;
+
+                continue;
             }
-
-            $sortOrder = (int) DB::table('lead_sources')->max('sort_order');
-            foreach ($this->preflight['sources']['create'] as $key) {
-                if (DB::table('lead_sources')->where('key', $key)->exists()) {
-                    continue;
-                }
+            try {
                 $source = $this->plan->sources[$key];
                 DB::table('lead_sources')->insert([
                     'key' => $key,
@@ -369,13 +421,20 @@ class LegacyImporter
                     'created_at' => $source['first_seen'],
                     'updated_at' => $source['first_seen'],
                 ]);
-                $created['sources']++;
+                $stats['sources']['created']++;
+            } catch (Throwable $e) {
+                $stats['sources']['failed']++;
+                $this->plan->warnings[] = "Source '{$key}' failed to insert: {$e->getMessage()}";
             }
+        }
 
-            foreach ($this->plan->partners as $nameKey => $partner) {
-                if (isset($this->partnerIds[$nameKey])) {
-                    continue;
-                }
+        foreach ($this->plan->partners as $nameKey => $partner) {
+            if (isset($this->partnerIds[$nameKey])) {
+                $stats['partners']['skipped']++;
+
+                continue;
+            }
+            try {
                 $this->partnerIds[$nameKey] = DB::table('channel_partners')->insertGetId([
                     'name' => $partner['name'],
                     'name_key' => $nameKey,
@@ -387,14 +446,17 @@ class LegacyImporter
                     'created_at' => $partner['first_seen'],
                     'updated_at' => $partner['first_seen'],
                 ]);
-                $created['partners']++;
+                $stats['partners']['created']++;
+            } catch (Throwable $e) {
+                $stats['partners']['failed']++;
+                $this->plan->warnings[] = "Channel partner '{$nameKey}' failed to insert: {$e->getMessage()}";
             }
-        });
+        }
 
         // DB::table() fires no LeadSource `saved` hook, so nothing else busts the cache
         CrmTaxonomy::flush();
 
-        return $created;
+        return $stats;
     }
 
     /**
@@ -402,41 +464,94 @@ class LegacyImporter
      * chunk of groups. A group — a lead and every row absorbed into it — is
      * never split across two chunks.
      *
+     * Leads get a fourth bucket, `absorbed`, alongside created/skipped/failed:
+     * an absorbed row is a genuine source row (counted in source_count) that
+     * becomes history on another lead rather than a lead of its own, so it is
+     * neither "created" nor "skipped as already there" on a first run. All
+     * four together still sum to source_count — see the command's own check.
+     *
+     * Todos' source_count is NOT todos.json's row count (12,289): the plan
+     * also synthesises one absorbed_stage row per absorbed lead and one
+     * final_stage row per survivor whose history needed one (see
+     * LegacyImportPlan::settleHistory) — every one of those is a real row
+     * this method writes, so it belongs in the count it is checked against.
+     *
      * @param  callable(int): void|null  $advance  called with the number of groups done
-     * @return array{leads: int, absorbed: int, todos: int, skipped_groups: int}
+     * @return array{
+     *     leads: array{created: int, absorbed: int, skipped: int, failed: int, source_count: int},
+     *     todos: array{created: int, skipped: int, failed: int, source_count: int},
+     * }
      */
     public function writeGroups(string $batch, int $chunkSize, ?callable $advance = null): array
     {
         $this->requirePreflight();
-        $stats = ['leads' => 0, 'absorbed' => 0, 'todos' => 0, 'skipped_groups' => 0];
+        $plannedTodos = array_sum(array_map('count', array_column($this->plan->groups, 'todos')));
+        $leadStats = ['created' => 0, 'absorbed' => 0, 'skipped' => 0, 'failed' => 0, 'source_count' => $this->plan->inputRows];
+        $todoStats = ['created' => 0, 'skipped' => 0, 'failed' => 0, 'source_count' => $plannedTodos];
 
         foreach (array_chunk($this->plan->groups, max(1, $chunkSize)) as $chunk) {
-            DB::transaction(function () use ($chunk, $batch, &$stats) {
+            DB::transaction(function () use ($chunk, $batch, &$leadStats, &$todoStats) {
                 $leadIds = [];
 
                 foreach ($chunk as $group) {
                     if (isset($this->importedRows[$group['survivor_row']])) {
-                        $stats['skipped_groups']++;
+                        // the whole group was written by an earlier run — every
+                        // member row (created or absorbed) already has a record
+                        $leadStats['skipped'] += count($group['records']);
+                        $todoStats['skipped'] += count($group['todos']);
 
                         continue;
                     }
 
-                    $leadId = DB::table('leads')->insertGetId($this->leadRow($group['lead']));
+                    try {
+                        $leadId = DB::table('leads')->insertGetId($this->leadRow($group['lead']));
+                    } catch (Throwable $e) {
+                        $leadStats['failed'] += count($group['records']);
+                        $todoStats['failed'] += count($group['todos']);
+                        $this->plan->warnings[] = "Lead group of row {$group['survivor_row']} failed to insert: {$e->getMessage()}";
+
+                        continue;
+                    }
                     $leadIds[] = $leadId;
 
-                    $todos = array_map(fn (array $todo) => $this->todoRow($leadId, $todo), $group['todos']);
-                    foreach (array_chunk($todos, 500) as $rows) {
-                        DB::table('todos')->insert($rows);
-                    }
-
-                    DB::table(self::RECORD_TABLE)->insert(array_map(
+                    DB::table(self::LEAD_RECORD_TABLE)->insert(array_map(
                         fn (array $record) => $this->recordRow($leadId, $record, $batch),
                         $group['records'],
                     ));
+                    $this->importedRows[$group['survivor_row']] = true;
 
-                    $stats['leads']++;
-                    $stats['absorbed'] += count($group['records']) - 1;
-                    $stats['todos'] += count($todos);
+                    $leadStats['created']++;
+                    $leadStats['absorbed'] += count($group['records']) - 1;
+
+                    $todoRecordRows = [];
+                    foreach ($group['todos'] as $todo) {
+                        $todoKey = "{$todo['source_file']}:{$todo['source_row']}:{$todo['column']}";
+                        if (isset($this->importedTodoRows[$todoKey])) {
+                            $todoStats['skipped']++;
+
+                            continue;
+                        }
+                        try {
+                            $todoId = DB::table('todos')->insertGetId($this->todoRow($leadId, $todo));
+                        } catch (Throwable $e) {
+                            $todoStats['failed']++;
+                            $this->plan->warnings[] = "Todo {$todoKey} failed to insert: {$e->getMessage()}";
+
+                            continue;
+                        }
+                        $todoRecordRows[] = [
+                            'source_file' => $todo['source_file'],
+                            'source_row' => $todo['source_row'],
+                            'source_column' => $todo['column'],
+                            'todo_id' => $todoId,
+                            'import_batch' => $batch,
+                        ];
+                        $this->importedTodoRows[$todoKey] = true;
+                        $todoStats['created']++;
+                    }
+                    foreach (array_chunk($todoRecordRows, 500) as $rows) {
+                        DB::table(self::TODO_RECORD_TABLE)->insert($rows);
+                    }
                 }
 
                 $this->tripwire($leadIds);
@@ -447,7 +562,7 @@ class LegacyImporter
             }
         }
 
-        return $stats;
+        return ['leads' => $leadStats, 'todos' => $todoStats];
     }
 
     /**
@@ -558,17 +673,16 @@ class LegacyImporter
      */
     public static function freshSummary(): array
     {
-        if (! Schema::hasTable(self::RECORD_TABLE)) {
+        if (! Schema::hasTable(self::LEAD_RECORD_TABLE)) {
             return ['leads' => 0, 'records' => 0, 'imported_todos' => 0, 'todos' => 0, 'activities' => 0, 'worked_since' => false];
         }
 
-        $created = DB::table(self::RECORD_TABLE)->where('source_file', LegacyImportPlan::SOURCE_FILE)->where('outcome', 'created');
-        $leadIds = fn () => DB::table(self::RECORD_TABLE)->where('source_file', LegacyImportPlan::SOURCE_FILE)
-            ->where('outcome', 'created')->select('lead_id');
+        $created = DB::table(self::LEAD_RECORD_TABLE)->where('outcome', 'created');
+        $leadIds = fn () => DB::table(self::LEAD_RECORD_TABLE)->where('outcome', 'created')->select('lead_id');
 
         $summary = [
             'leads' => (clone $created)->count(),
-            'records' => DB::table(self::RECORD_TABLE)->where('source_file', LegacyImportPlan::SOURCE_FILE)->count(),
+            'records' => DB::table(self::LEAD_RECORD_TABLE)->count(),
             'imported_todos' => (int) (clone $created)->sum('imported_todo_count'),
             'todos' => DB::table('todos')->whereIn('lead_id', $leadIds())->count(),
             'activities' => DB::table('lead_activities')->whereIn('lead_id', $leadIds())->count(),
@@ -584,17 +698,17 @@ class LegacyImporter
      */
     public static function fresh(int $chunkSize = 500): int
     {
-        if (! Schema::hasTable(self::RECORD_TABLE)) {
+        if (! Schema::hasTable(self::LEAD_RECORD_TABLE)) {
             return 0;
         }
 
         $deleted = 0;
-        $ids = DB::table(self::RECORD_TABLE)->where('source_file', LegacyImportPlan::SOURCE_FILE)
-            ->where('outcome', 'created')->pluck('lead_id')->all();
+        $ids = DB::table(self::LEAD_RECORD_TABLE)->where('outcome', 'created')->pluck('lead_id')->all();
 
         foreach (array_chunk($ids, $chunkSize) as $chunk) {
             DB::transaction(function () use ($chunk, &$deleted) {
-                DB::table(self::RECORD_TABLE)->whereIn('lead_id', $chunk)->delete();
+                DB::table(self::TODO_RECORD_TABLE)->whereIn('todo_id', DB::table('todos')->whereIn('lead_id', $chunk)->select('id'))->delete();
+                DB::table(self::LEAD_RECORD_TABLE)->whereIn('lead_id', $chunk)->delete();
                 DB::table('todos')->whereIn('lead_id', $chunk)->delete();
                 $deleted += DB::table('leads')->whereIn('id', $chunk)->delete();
             });
@@ -616,11 +730,9 @@ class LegacyImporter
     public static function verify(string $today, array $terminalStages): array
     {
         $imported = fn () => DB::table('leads')
-            ->join(self::RECORD_TABLE.' as r', 'r.lead_id', '=', 'leads.id')
-            ->where('r.source_file', LegacyImportPlan::SOURCE_FILE)
+            ->join(self::LEAD_RECORD_TABLE.' as r', 'r.lead_id', '=', 'leads.id')
             ->where('r.outcome', 'created');
-        $importedIds = fn () => DB::table(self::RECORD_TABLE)->where('source_file', LegacyImportPlan::SOURCE_FILE)
-            ->where('outcome', 'created')->select('lead_id');
+        $importedIds = fn () => DB::table(self::LEAD_RECORD_TABLE)->where('outcome', 'created')->select('lead_id');
 
         $leadDatesToday = $imported()->where(fn ($q) => $q
             ->whereDate('leads.created_at', $today)->orWhereDate('leads.updated_at', $today)
@@ -633,7 +745,7 @@ class LegacyImporter
         // created_at on each lead against the oldest created_at in its source rows
         $createdAtMismatches = 0;
         $expected = [];
-        DB::table(self::RECORD_TABLE)->where('source_file', LegacyImportPlan::SOURCE_FILE)
+        DB::table(self::LEAD_RECORD_TABLE)
             ->orderBy('id')->select(['id', 'lead_id', 'legacy'])
             ->chunkById(1000, function ($records) use (&$expected) {
                 foreach ($records as $record) {
@@ -662,10 +774,11 @@ class LegacyImporter
             ->mapWithKeys(fn ($total, $id) => [$names[$id] ?? "#{$id}" => $total])->all();
 
         return [
-            'records' => DB::table(self::RECORD_TABLE)->where('source_file', LegacyImportPlan::SOURCE_FILE)->count(),
+            'records' => DB::table(self::LEAD_RECORD_TABLE)->count(),
             'created' => $imported()->count(),
-            'absorbed' => DB::table(self::RECORD_TABLE)->where('source_file', LegacyImportPlan::SOURCE_FILE)->where('outcome', 'absorbed')->count(),
+            'absorbed' => DB::table(self::LEAD_RECORD_TABLE)->where('outcome', 'absorbed')->count(),
             'todos' => DB::table('todos')->whereIn('lead_id', $importedIds())->count(),
+            'todo_records' => DB::table(self::TODO_RECORD_TABLE)->count(),
             'oldest_created_at' => $imported()->min('leads.created_at'),
             'newest_created_at' => $imported()->max('leads.created_at'),
             'lead_dates_today' => $leadDatesToday,

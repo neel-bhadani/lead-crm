@@ -136,6 +136,22 @@ return [
         'general_enquiry' => 'General enquiry',
         'misclick' => 'Misclick',
         'ready_to_move' => 'Wants ready to move',
+
+        /*
+         | The remaining reasons found across MYCO and the 12-Sep-Lead CSV
+         | when `import:legacy` merged all three legacy sources. Same
+         | reasoning as the block above: these keys are on imported lost
+         | leads, so LeadRequest/CompleteTodoRequest must accept them.
+         */
+        'not_qualified' => 'Not qualified',
+        'plan_hold_cancel' => 'Plan hold & cancel',
+        'other_cast' => 'Other cast',
+        'wrong_number' => 'Wrong number',
+        'old_property_sale' => 'Old property sale',
+        'lost_to_broker' => 'Lost to broker',
+        'possession_timeline_issue' => 'Possession timeline issue',
+        'vastu' => 'Vastu',
+        'upcoming_project' => 'Upcoming project',
     ],
 
     'todo_types' => [

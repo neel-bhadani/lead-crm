@@ -8,7 +8,8 @@ use JsonException;
 /**
  * The whole legacy import, worked out in memory before anything is written.
  *
- * Reads the restructured JSON in master-data/db/ and turns it into the rows
+ * Reads the restructured JSON in old-data/ (three merged legacy sources —
+ * the Master Sheet, MYCO, and the 12-Sep-Lead CSV) and turns it into the rows
  * that will be inserted: reference data, then one GROUP per lead to create.
  * A group is the surviving source row plus every row absorbed into it —
  * the rows that share its mobile number AND its project, which the unique
@@ -20,17 +21,17 @@ use JsonException;
  *
  * Ids do not exist yet, so rows name each other by key: a lead carries
  * `project_key`, `owner_name` and `partner_name_key`, and a todo `owner_name`.
+ *
+ * Every lead and every source row already carries a globally unique
+ * `_import_key` ("source_file:row") — three files share the row-number
+ * space (master_sheet row 5 and 12_sep_lead row 5 are unrelated), so every
+ * lookup below keys on `_import_key`, never on the bare row number alone.
  */
 class LegacyImportPlan
 {
-    public const SOURCE_FILE = 'master_sheet';
-
     public const UNASSIGNED_PROJECT_KEY = '__unassigned__';
 
     public const UNASSIGNED_PROJECT_NAME = 'Unassigned';
-
-    /** Stands in for "the admin" wherever the sheet names nobody. */
-    public const ADMIN = '__admin__';
 
     /**
      * What an old follow-up call records as its outcome stage.
@@ -64,13 +65,13 @@ class LegacyImportPlan
     /** @var array<string, array{name: string, first_seen: string}> keyed by project key */
     public array $projects = [];
 
-    /** @var array<string, array{first_name: string, last_name: string, email: string, first_seen: string}> keyed by the name as written */
+    /** @var array<string, array{first_name: string, last_name: string, email: string, role: string, is_active: bool, first_seen: string}> keyed by the name as written */
     public array $users = [];
 
     /** @var array<string, array{label: string, first_seen: ?string}> keyed by source key */
     public array $sources = [];
 
-    /** @var array<string, array{name: string, phone: string, alt_phone: ?string, first_seen: ?string, numbers: list<string>, names: list<string>}> keyed by name_key */
+    /** @var array<string, array{name: string, phone: string, alt_phone: ?string, first_seen: ?string}> keyed by name_key */
     public array $partners = [];
 
     /**
@@ -78,7 +79,7 @@ class LegacyImportPlan
      *     lead: array<string, mixed>,
      *     todos: list<array<string, mixed>>,
      *     records: list<array<string, mixed>>,
-     *     survivor_row: int,
+     *     survivor_row: string,
      * }>
      */
     public array $groups = [];
@@ -160,13 +161,13 @@ class LegacyImportPlan
 
         $byRow = [];
         foreach ($leads as $lead) {
-            $row = $lead['_row_number'] ?? null;
-            if (! is_int($row) || isset($byRow[$row])) {
-                $this->errors[] = 'leads.json: missing or repeated _row_number '.json_encode($row);
+            $key = $lead['_import_key'] ?? null;
+            if (! is_string($key) || $key === '' || isset($byRow[$key])) {
+                $this->errors[] = 'leads.json: missing or repeated _import_key '.json_encode($key);
 
                 continue;
             }
-            $byRow[$row] = $lead;
+            $byRow[$key] = $lead;
         }
 
         $this->projectsFrom($projects, $byRow);
@@ -176,17 +177,17 @@ class LegacyImportPlan
 
         $todosByRow = [];
         foreach ($todos as $todo) {
-            $row = $todo['lead_row_number'] ?? null;
-            if (! isset($byRow[$row])) {
-                $this->errors[] = 'todos.json: a todo names lead row '.json_encode($row).', which is not in leads.json';
+            $key = $todo['_lead_import_key'] ?? null;
+            if (! isset($byRow[$key])) {
+                $this->errors[] = 'todos.json: a todo names lead '.json_encode($key).', which is not in leads.json';
 
                 continue;
             }
-            $todosByRow[$row][] = $todo;
+            $todosByRow[$key][] = $todo;
         }
 
-        foreach ($byRow as $row => $lead) {
-            $this->validateLead($row, $lead);
+        foreach ($byRow as $key => $lead) {
+            $this->validateLead($key, $lead);
         }
 
         if ($this->errors !== []) {
@@ -244,7 +245,7 @@ class LegacyImportPlan
 
     /**
      * @param  list<array<string, mixed>>  $projects
-     * @param  array<int, array<string, mixed>>  $byRow
+     * @param  array<string, array<string, mixed>>  $byRow
      */
     private function projectsFrom(array $projects, array $byRow): void
     {
@@ -252,20 +253,20 @@ class LegacyImportPlan
             $this->projects[$project['key']] = ['name' => $project['name'], 'first_seen' => null];
         }
 
-        foreach ($byRow as $lead) {
-            $key = $lead['project_key'] ?? self::UNASSIGNED_PROJECT_KEY;
+        foreach ($byRow as $key => $lead) {
+            $pkey = $lead['project_key'] ?? self::UNASSIGNED_PROJECT_KEY;
 
-            if ($key === self::UNASSIGNED_PROJECT_KEY) {
-                $this->projects[$key] ??= ['name' => self::UNASSIGNED_PROJECT_NAME, 'first_seen' => null];
+            if ($pkey === self::UNASSIGNED_PROJECT_KEY) {
+                $this->projects[$pkey] ??= ['name' => self::UNASSIGNED_PROJECT_NAME, 'first_seen' => null];
             }
 
-            if (! isset($this->projects[$key])) {
-                $this->errors[] = "Row {$lead['_row_number']}: project_key '{$key}' is not in projects.json";
+            if (! isset($this->projects[$pkey])) {
+                $this->errors[] = "Row {$key}: project_key '{$pkey}' is not in projects.json";
 
                 continue;
             }
 
-            $this->projects[$key]['first_seen'] = $this->earliest($this->projects[$key]['first_seen'], $lead['created_at']);
+            $this->projects[$pkey]['first_seen'] = $this->earliest($this->projects[$pkey]['first_seen'], $lead['created_at']);
         }
 
         // a project nobody's lead points at is not created
@@ -274,7 +275,7 @@ class LegacyImportPlan
 
     /**
      * @param  list<array<string, mixed>>  $users
-     * @param  array<int, array<string, mixed>>  $byRow
+     * @param  array<string, array<string, mixed>>  $byRow
      */
     private function usersFrom(array $users, array $byRow): void
     {
@@ -282,18 +283,25 @@ class LegacyImportPlan
             $this->users[$user['name']] = [
                 'first_name' => $user['proposed_first_name'],
                 'last_name' => $user['proposed_last_name'],
-                'email' => 'legacy+'.Str::slug($user['name'], '.').'@import.invalid',
+                'email' => $user['email'],
+                'role' => $user['role'],
+                'is_active' => (bool) $user['is_active'],
                 'first_seen' => null,
             ];
         }
 
-        foreach ($byRow as $lead) {
-            $name = $lead['assigned_to_name'];
+        foreach ($byRow as $key => $lead) {
+            $name = $lead['assigned_to_name'] ?? null;
             if ($name === null) {
+                // build.py's assignment override guarantees every lead has an
+                // owner (a mapped project's salesperson, or the telecaller) —
+                // fail loudly rather than silently defaulting the lead
+                $this->errors[] = "Row {$key}: no assigned_to_name (the assignment override should never leave this null)";
+
                 continue;
             }
             if (! isset($this->users[$name])) {
-                $this->errors[] = "Row {$lead['_row_number']}: assigned user '{$name}' is not in users.json";
+                $this->errors[] = "Row {$key}: assigned user '{$name}' is not in users.json";
 
                 continue;
             }
@@ -303,7 +311,7 @@ class LegacyImportPlan
 
     /**
      * @param  list<array<string, mixed>>  $sources
-     * @param  array<int, array<string, mixed>>  $byRow
+     * @param  array<string, array<string, mixed>>  $byRow
      */
     private function sourcesFrom(array $sources, array $byRow): void
     {
@@ -328,16 +336,30 @@ class LegacyImportPlan
 
     /**
      * One partner per name_key, because channel_partners is unique on
-     * (name_key, type): "Shailesh Thakkar" and "Shailesh thakkar" are one row.
-     * The first spelling seen names it, and its first two distinct numbers
-     * become phone and alt_phone. Every lead still keeps its broker name and
-     * number exactly as written, in broker_name and in its import record.
+     * (name_key, type): "Shailesh Thakkar" and "Shailesh thakkar" are one row
+     * — and the index cannot see phone at all, so two real people sharing a
+     * name can still only ever be one row.
+     *
+     * The phone kept as `phone` is whichever distinct number is attached to
+     * the most leads across every entry sharing this name_key; the next most
+     * distinct number becomes `alt_phone` (already nullable — no schema
+     * change). A name_key with a THIRD distinct number is not guessed at
+     * further: it is dropped from this row and named in `warnings` instead,
+     * for a human to split by hand.
+     *
+     * Every lead still keeps its broker name and number exactly as written,
+     * in broker_name and in its import record, whichever way this resolves.
      *
      * @param  list<array<string, mixed>>  $partners
-     * @param  array<int, array<string, mixed>>  $byRow
+     * @param  array<string, array<string, mixed>>  $byRow
      */
     private function partnersFrom(array $partners, array $byRow): void
     {
+        /** @var array<string, array<string, string>> name_key => number => name last seen with it */
+        $names = [];
+        /** @var array<string, array<string, int>> name_key => number => total lead_count behind it */
+        $weight = [];
+
         foreach ($partners as $pair) {
             $key = $pair['name_key'];
             if ($key === '') {
@@ -346,28 +368,45 @@ class LegacyImportPlan
                 continue;
             }
 
-            $this->partners[$key] ??= ['name' => $pair['name'], 'numbers' => [], 'names' => [], 'first_seen' => null];
-            $this->partners[$key]['names'][] = $pair['name'];
+            $names[$key] ??= [];
+            $weight[$key] ??= [];
             foreach ([$pair['phone'], $pair['alt_phone']] as $number) {
-                if ($number !== null && $number !== '' && ! in_array($number, $this->partners[$key]['numbers'], true)) {
-                    $this->partners[$key]['numbers'][] = $number;
+                if ($number !== null && $number !== '') {
+                    $names[$key][$number] = $pair['name'];
+                    $weight[$key][$number] = ($weight[$key][$number] ?? 0) + (int) $pair['lead_count'];
                 }
             }
             $this->pairToNameKey[$pair['key']] = $key;
         }
 
-        foreach ($this->partners as $key => $partner) {
-            $this->partners[$key]['phone'] = $partner['numbers'][0] ?? '';
-            $this->partners[$key]['alt_phone'] = $partner['numbers'][1] ?? null;
+        foreach ($names as $key => $numbers) {
+            arsort($weight[$key]);
+            $ranked = array_keys($weight[$key]);
+
+            if (count($ranked) > 2) {
+                $this->warnings[] = "Channel partner '{$key}': ".count($ranked).' distinct phone numbers found '
+                    ."(kept the top two by lead count: {$ranked[0]}, {$ranked[1]}; dropped ".implode(', ', array_slice($ranked, 2))
+                    .') — split these by hand if they are different people.';
+            } elseif (count($ranked) === 2) {
+                $this->warnings[] = "Channel partner '{$key}': two different phone numbers found under this name "
+                    ."({$ranked[0]} kept as phone, {$ranked[1]} as alt_phone) — confirm this is one person, not two.";
+            }
+
+            $this->partners[$key] = [
+                'name' => $names[$key][$ranked[0] ?? null] ?? array_values($names[$key])[0] ?? $key,
+                'phone' => $ranked[0] ?? '',
+                'alt_phone' => $ranked[1] ?? null,
+                'first_seen' => null,
+            ];
         }
 
-        foreach ($byRow as $row => $lead) {
+        foreach ($byRow as $lead) {
             $pair = $lead['channel_partner_key'];
             if ($pair === null) {
                 continue;
             }
             if (! isset($this->pairToNameKey[$pair])) {
-                $this->errors[] = "Row {$row}: channel_partner_key '{$pair}' is not in channel_partners.json";
+                $this->errors[] = "channel_partner_key '{$pair}' is not in channel_partners.json";
 
                 continue;
             }
@@ -381,25 +420,25 @@ class LegacyImportPlan
     /**
      * @param  array<string, mixed>  $lead
      */
-    private function validateLead(int $row, array $lead): void
+    private function validateLead(string $key, array $lead): void
     {
         foreach (['created_at', 'updated_at', 'last_activity_at', 'stage_changed_at'] as $field) {
             $value = $lead[$field] ?? null;
             if ($value === null) {
                 if ($field === 'created_at' || $field === 'updated_at') {
-                    $this->errors[] = "Row {$row}: {$field} is empty";
+                    $this->errors[] = "Row {$key}: {$field} is empty";
                 }
 
                 continue;
             }
-            $this->checkDate("Row {$row} {$field}", $value);
+            $this->checkDate("Row {$key} {$field}", $value);
         }
 
         if (($lead['stage'] ?? null) === null || $lead['stage'] === '') {
-            $this->errors[] = "Row {$row}: no stage";
+            $this->errors[] = "Row {$key}: no stage";
         }
         if (($lead['source'] ?? null) === null || $lead['source'] === '') {
-            $this->errors[] = "Row {$row}: no source";
+            $this->errors[] = "Row {$key}: no source";
         }
     }
 
@@ -419,22 +458,22 @@ class LegacyImportPlan
      * Newest first inside a group — the order `_duplicate_rank` already
      * gives — so the survivor is always index 0.
      *
-     * @param  array<int, array<string, mixed>>  $byRow
+     * @param  array<string, array<string, mixed>>  $byRow
      * @return list<list<array<string, mixed>>>
      */
     private function groupRows(array $byRow): array
     {
         $groups = [];
-        foreach ($byRow as $row => $lead) {
-            $key = $lead['mobile_number'] === null
-                ? "row:{$row}"
+        foreach ($byRow as $key => $lead) {
+            $groupKey = $lead['mobile_number'] === null
+                ? "row:{$key}"
                 : $lead['mobile_number'].'|'.($lead['project_key'] ?? self::UNASSIGNED_PROJECT_KEY);
-            $groups[$key][] = $lead;
+            $groups[$groupKey][] = $lead;
         }
 
         foreach ($groups as &$members) {
-            usort($members, fn (array $a, array $b) => [$a['_duplicate_rank'] ?? 0, $b['created_at'], $b['_row_number']]
-                <=> [$b['_duplicate_rank'] ?? 0, $a['created_at'], $a['_row_number']]);
+            usort($members, fn (array $a, array $b) => [$a['_duplicate_rank'] ?? 0, $b['created_at'], $b['_source_file'], $b['_row_number']]
+                <=> [$b['_duplicate_rank'] ?? 0, $a['created_at'], $a['_source_file'], $a['_row_number']]);
         }
 
         return array_values($groups);
@@ -442,18 +481,18 @@ class LegacyImportPlan
 
     /**
      * @param  list<array<string, mixed>>  $members  survivor first
-     * @param  array<int, list<array<string, mixed>>>  $todosByRow
-     * @return array{lead: array<string, mixed>, todos: list<array<string, mixed>>, records: list<array<string, mixed>>, survivor_row: int}
+     * @param  array<string, list<array<string, mixed>>>  $todosByRow
+     * @return array{lead: array<string, mixed>, todos: list<array<string, mixed>>, records: list<array<string, mixed>>, survivor_row: string}
      */
     private function buildGroup(array $members, array $todosByRow): array
     {
         $survivor = $members[0];
         $absorbed = array_slice($members, 1);
-        $flags = array_fill_keys(array_column($members, '_row_number'), []);
+        $flags = array_fill_keys(array_column($members, '_import_key'), []);
 
         $todos = [];
         foreach ($members as $member) {
-            foreach ($this->memberTodos($member, $todosByRow[$member['_row_number']] ?? [], $flags) as $todo) {
+            foreach ($this->memberTodos($member, $todosByRow[$member['_import_key']] ?? [], $flags) as $todo) {
                 $todos[] = $todo;
             }
         }
@@ -473,7 +512,7 @@ class LegacyImportPlan
             ? $this->pairToNameKey[$survivor['channel_partner_key']]
             : null;
         if ($survivor['channel_partner_key'] !== null && $partnerKey === null) {
-            $flags[$survivor['_row_number']][] = 'channel_partner_not_linked:source_is_not_broker';
+            $flags[$survivor['_import_key']][] = 'channel_partner_not_linked:source_is_not_broker';
         }
 
         $open = ! in_array($survivor['stage'], $this->terminalStages, true);
@@ -492,7 +531,7 @@ class LegacyImportPlan
             'stage' => $survivor['stage'],
             'stage_changed_at' => $stageChangedAt,
             'not_connected_count' => $survivor['not_connected_count'],
-            'owner_name' => $survivor['assigned_to_name'] ?? self::ADMIN,
+            'owner_name' => $survivor['assigned_to_name'],
             'created_by' => null,
             'requirement' => $survivor['requirement'],
             'reason' => $survivor['reason'],
@@ -506,47 +545,44 @@ class LegacyImportPlan
 
         foreach (['created_at', 'updated_at', 'stage_changed_at', 'last_activity_at'] as $field) {
             if ($lead[$field] !== null) {
-                $this->checkDate("Lead from row {$survivor['_row_number']} {$field}", $lead[$field]);
+                $this->checkDate("Lead from row {$survivor['_import_key']} {$field}", $lead[$field]);
             }
         }
 
-        if ($survivor['assigned_to_name'] === null) {
-            $flags[$survivor['_row_number']][] = 'assigned_to_admin:no_assigned_user';
-        }
         if ($survivor['project_key'] === null) {
-            $flags[$survivor['_row_number']][] = 'project_unassigned:no_project';
+            $flags[$survivor['_import_key']][] = 'project_unassigned:no_project';
         }
         if ($survivor['mobile_number'] === null) {
-            $flags[$survivor['_row_number']][] = 'mobile_stored_as_null';
+            $flags[$survivor['_import_key']][] = 'mobile_stored_as_null';
         }
         if ($open) {
-            $flags[$survivor['_row_number']][] = 'awaiting_follow_up';
+            $flags[$survivor['_import_key']][] = 'awaiting_follow_up';
         }
         if ($absorbed !== []) {
-            $flags[$survivor['_row_number']][] = 'survivor_of_rows:'.implode(',', array_column($absorbed, '_row_number'));
+            $flags[$survivor['_import_key']][] = 'survivor_of_rows:'.implode(',', array_column($absorbed, '_import_key'));
         }
 
         $records = [];
         foreach ($members as $index => $member) {
-            $row = $member['_row_number'];
+            $key = $member['_import_key'];
             if ($index > 0) {
-                $flags[$row][] = "absorbed_into_row:{$survivor['_row_number']}";
+                $flags[$key][] = "absorbed_into_row:{$survivor['_import_key']}";
             }
             $records[] = [
-                'source_file' => self::SOURCE_FILE,
-                'source_row' => $row,
+                'source_file' => $member['_source_file'],
+                'source_row' => $member['_row_number'],
                 'outcome' => $index === 0 ? 'created' : 'absorbed',
-                'duplicate_group' => $member['_duplicate_group'],
-                'duplicate_rank' => $member['_duplicate_rank'],
+                'duplicate_group' => $member['_duplicate_group'] ?? null,
+                'duplicate_rank' => $member['_duplicate_rank'] ?? null,
                 'awaiting_follow_up' => $index === 0 && $open,
                 'imported_todo_count' => $index === 0 ? count($todos) : 0,
                 'filled' => $member['_filled'],
-                'flags' => array_values(array_merge($member['_flags'], $flags[$row])),
+                'flags' => array_values(array_merge($member['_flags'], $flags[$key])),
                 'legacy' => $member,
             ];
         }
 
-        return ['lead' => $lead, 'todos' => $todos, 'records' => $records, 'survivor_row' => $survivor['_row_number']];
+        return ['lead' => $lead, 'todos' => $todos, 'records' => $records, 'survivor_row' => $survivor['_import_key']];
     }
 
     /**
@@ -558,12 +594,12 @@ class LegacyImportPlan
      *
      * @param  array<string, mixed>  $member
      * @param  list<array<string, mixed>>  $todos
-     * @param  array<int, list<string>>  $flags
+     * @param  array<string, list<string>>  $flags
      * @return list<array<string, mixed>>
      */
     private function memberTodos(array $member, array $todos, array &$flags): array
     {
-        $row = $member['_row_number'];
+        $key = $member['_import_key'];
         $dated = [];
         foreach ($todos as $todo) {
             if ($todo['scheduled_at'] !== null) {
@@ -579,19 +615,20 @@ class LegacyImportPlan
 
             if ($date === null) {
                 [$date, $from] = $this->borrowDate($column, $isVisit ? self::VISIT_COLUMNS : self::FOLLOW_UP_COLUMNS, $dated, $member);
-                $flags[$row][] = "todo:{$column}:date_borrowed_from:{$from}";
+                $flags[$key][] = "todo:{$column}:date_borrowed_from:{$from}";
                 $this->todoCounts['date_borrowed']++;
             } elseif (substr($date, 0, 10) > $this->today) {
-                $flags[$row][] = "todo:{$column}:dated_in_the_future";
+                $flags[$key][] = "todo:{$column}:dated_in_the_future";
             }
 
-            $this->checkDate("Todo row {$row} {$column}", $date);
+            $this->checkDate("Todo row {$key} {$column}", $date);
             $this->todoCounts[$isVisit ? 'visits' : 'follow_ups']++;
 
             $out[] = [
-                'source_row' => $row,
+                'source_file' => $member['_source_file'],
+                'source_row' => $member['_row_number'],
                 'column' => $column,
-                'owner_name' => $todo['assigned_to_name'] ?? self::ADMIN,
+                'owner_name' => $todo['assigned_to_name'],
                 'date' => $date,
                 'type' => $todo['type'],
                 'remarks' => $todo['remarks'],
@@ -622,24 +659,30 @@ class LegacyImportPlan
     /**
      * An absorbed row's stage, kept as history on the surviving lead.
      *
+     * Describes the stage from the row's own already-mapped `stage`/`reason`
+     * rather than a source-file-specific raw column (master_sheet's
+     * secondary_stages has no equivalent in MYCO or the CSV, and an absorbed
+     * row can come from any of the three).
+     *
      * @param  array<string, mixed>  $row
      * @return array<string, mixed>
      */
     private function absorbedStageTodo(array $row): array
     {
-        $legacy = $row['_legacy'];
-
         return [
+            'source_file' => $row['_source_file'],
             'source_row' => $row['_row_number'],
             'column' => 'absorbed_stage',
-            'owner_name' => $row['assigned_to_name'] ?? self::ADMIN,
+            'owner_name' => $row['assigned_to_name'],
             'date' => $row['created_at'],
             'type' => 'call',
             'remarks' => sprintf(
-                'From a duplicate record: Master Sheet row %d, created %s, stage "%s".',
+                'From a duplicate record: %s row %d, created %s, stage "%s"%s.',
+                $row['_source_file'],
                 $row['_row_number'],
                 substr($row['created_at'], 0, 10),
-                $legacy['secondary_stages'],
+                $row['stage'],
+                $row['reason'] ? " ({$row['reason']})" : '',
             ),
             // `fresh` is not a transition — see LeadFollowUpService::onLeadCreated()
             'outcome_stage' => $row['stage'] === 'fresh' ? null : $row['stage'],
@@ -666,12 +709,13 @@ class LegacyImportPlan
      * @param  array<string, mixed>  $survivor
      * @param  list<array<string, mixed>>  $members
      * @param  list<array<string, mixed>>  $todos
-     * @param  array<int, list<string>>  $flags
+     * @param  array<string, list<string>>  $flags
      * @return array{0: list<array<string, mixed>>, 1: ?string}
      */
     private function settleHistory(array $survivor, array $members, array $todos, array &$flags): array
     {
         $stage = $survivor['stage'];
+        $survivorKey = $survivor['_import_key'];
 
         foreach ($todos as $i => &$todo) {
             $todo['sequence'] = $i;
@@ -688,7 +732,7 @@ class LegacyImportPlan
             }
             $key = $todo['outcome_stage'].'|'.$todo['date'];
             if (isset($seen[$key])) {
-                $flags[$todo['source_row']][] = "todo:{$todo['column']}:stage_already_recorded_same_day";
+                $flags[$todo['source_file'].':'.$todo['source_row']][] = "todo:{$todo['column']}:stage_already_recorded_same_day";
                 $todo['outcome_stage'] = null;
                 $this->todoCounts['stage_already_recorded_same_day']++;
             }
@@ -702,11 +746,12 @@ class LegacyImportPlan
 
         $history = array_values(array_filter($todos, fn (array $t) => $t['outcome_stage'] !== null));
         $newest = end($history) ?: null;
+        $isSurvivorRow = fn (array $t) => $t['source_file'] === $survivor['_source_file'] && $t['source_row'] === $survivor['_row_number'];
 
         // only the survivor's own history can stand for its stage: an absorbed
         // row reaching the same stage is that older record's past, not when
         // the lead got where it is now
-        if ($newest !== null && $newest['outcome_stage'] === $stage && $newest['source_row'] === $survivor['_row_number']) {
+        if ($newest !== null && $newest['outcome_stage'] === $stage && $isSurvivorRow($newest)) {
             return [$this->withoutSequence($todos), $newest['date']];
         }
 
@@ -715,7 +760,7 @@ class LegacyImportPlan
         // the row below becomes the one transition to this stage on that day
         foreach ($todos as &$todo) {
             if ($todo['outcome_stage'] === $stage && $todo['date'] === $date) {
-                $flags[$todo['source_row']][] = "todo:{$todo['column']}:stage_already_recorded_same_day";
+                $flags[$todo['source_file'].':'.$todo['source_row']][] = "todo:{$todo['column']}:stage_already_recorded_same_day";
                 $todo['outcome_stage'] = null;
                 $this->todoCounts['stage_already_recorded_same_day']++;
             }
@@ -723,15 +768,18 @@ class LegacyImportPlan
         unset($todo);
 
         $todos[] = [
+            'source_file' => $survivor['_source_file'],
             'source_row' => $survivor['_row_number'],
             'column' => 'final_stage',
-            'owner_name' => $survivor['assigned_to_name'] ?? self::ADMIN,
+            'owner_name' => $survivor['assigned_to_name'],
             'date' => $date,
             'type' => 'call',
             'remarks' => sprintf(
-                'Imported from Master Sheet row %d at this stage: "%s".',
+                'Imported from %s row %d at this stage: "%s"%s.',
+                $survivor['_source_file'],
                 $survivor['_row_number'],
-                $survivor['_legacy']['secondary_stages'],
+                $stage,
+                $survivor['reason'] ? " ({$survivor['reason']})" : '',
             ),
             'outcome_stage' => $stage,
         ];

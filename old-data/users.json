@@ -1,0 +1,58 @@
+[
+  {
+    "name": "Mayur Patel",
+    "proposed_first_name": "Mayur",
+    "proposed_last_name": "Patel",
+    "role": "salesperson",
+    "is_active": false,
+    "email": "mayur.patel@legacy.import",
+    "mobile_number": null,
+    "lead_count": 2995,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "_filled": ["email"],
+    "_flags": ["placeholder_email", "created_inactive"],
+    "_note": "Assigned by project, per the new rule, not by any source file's owner column. email is a placeholder - users.email is NOT NULL/unique and none of the four files has one; mobile_number is left null (nullable) rather than invented. is_active=false so the account cannot sign in until the client is ready."
+  },
+  {
+    "name": "Ravi Patel",
+    "proposed_first_name": "Ravi",
+    "proposed_last_name": "Patel",
+    "role": "salesperson",
+    "is_active": false,
+    "email": "ravi.patel@legacy.import",
+    "mobile_number": null,
+    "lead_count": 5201,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "_filled": ["email"],
+    "_flags": ["placeholder_email", "created_inactive"],
+    "_note": "Assigned by project, per the new rule, not by any source file's owner column. email is a placeholder - users.email is NOT NULL/unique and none of the four files has one; mobile_number is left null (nullable) rather than invented. is_active=false so the account cannot sign in until the client is ready."
+  },
+  {
+    "name": "Dhanashri Meshram",
+    "proposed_first_name": "Dhanashri",
+    "proposed_last_name": "Meshram",
+    "role": "salesperson",
+    "is_active": false,
+    "email": "dhanashri.meshram@legacy.import",
+    "mobile_number": null,
+    "lead_count": 7490,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "_filled": ["email"],
+    "_flags": ["placeholder_email", "created_inactive"],
+    "_note": "Assigned by project, per the new rule, not by any source file's owner column. email is a placeholder - users.email is NOT NULL/unique and none of the four files has one; mobile_number is left null (nullable) rather than invented. is_active=false so the account cannot sign in until the client is ready."
+  },
+  {
+    "name": "Riya Gandhi",
+    "proposed_first_name": "Riya",
+    "proposed_last_name": "Gandhi",
+    "role": "telecaller",
+    "is_active": false,
+    "email": "riya.gandhi@legacy.import",
+    "mobile_number": null,
+    "lead_count": 453,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "_filled": ["email"],
+    "_flags": ["placeholder_email", "created_inactive"],
+    "_note": "Assigned by project, per the new rule, not by any source file's owner column. email is a placeholder - users.email is NOT NULL/unique and none of the four files has one; mobile_number is left null (nullable) rather than invented. is_active=false so the account cannot sign in until the client is ready."
+  }
+]

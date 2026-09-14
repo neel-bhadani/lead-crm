@@ -1,0 +1,551 @@
+{
+  "generated_on": "2026-09-14",
+  "sources_read": {
+    "master_sheet": "master-data/db/*.json (already converted; read only)",
+    "myco": "MYCO/MYCO.xlsx",
+    "12_sep_lead": "12-Sep-Lead/12 Sep Lead.csv",
+    "channel_partners_file": "channel_partners_Data.xls"
+  },
+  "counts": {
+    "input_rows": {
+      "master_sheet": 8862,
+      "myco": 4337,
+      "12_sep_lead": 2940,
+      "total": 16139
+    },
+    "output_leads": {
+      "master_sheet": 8862,
+      "myco": 4337,
+      "12_sep_lead": 2940,
+      "total": 16139
+    },
+    "match": true,
+    "arithmetic_check": "8862 + 4337 + 2940 = 16139 (== 16139)",
+    "todos": 12289,
+    "channel_partners_primary_file": 260,
+    "channel_partners_total_entries": 546,
+    "channel_partners_by_origin": {
+      "channel_partners_file": 260,
+      "master_sheet": 189,
+      "myco_lead_file": 57,
+      "12_sep_lead_file": 40
+    },
+    "projects": 7,
+    "users": 4,
+    "stages_distinct_source_values": 69,
+    "sources_distinct_combinations": 142,
+    "lost_reasons": 22
+  },
+  "checks": {
+    "dates_written": 86501,
+    "dates_not_in_Y-m-d_H:i:s": 0,
+    "dates_equal_to_today": 0,
+    "dates_equal_to_today_examples": []
+  },
+  "created_at_by_file": {
+    "master_sheet": {
+      "oldest": "2024-02-18 00:00:00",
+      "newest": "2026-04-29 00:00:00"
+    },
+    "myco": {
+      "oldest": "2026-02-24 11:22:13",
+      "newest": "2026-08-01 09:55:19"
+    },
+    "12_sep_lead": {
+      "oldest": "2026-03-09 15:03:00",
+      "newest": "2026-09-12 11:02:00"
+    }
+  },
+  "leads_by_stage": {
+    "combined": {
+      "lost": 15342,
+      "site_visit_done": 336,
+      "in_discussion": 206,
+      "fresh": 160,
+      "not_connected": 50,
+      "booking_done": 42,
+      "site_visit_scheduled": 2,
+      "connected": 1
+    },
+    "master_sheet": {
+      "lost": 8467,
+      "site_visit_done": 336,
+      "not_connected": 50,
+      "in_discussion": 5,
+      "site_visit_scheduled": 2,
+      "connected": 1,
+      "fresh": 1
+    },
+    "myco": {
+      "lost": 4337
+    },
+    "12_sep_lead": {
+      "lost": 2538,
+      "in_discussion": 201,
+      "fresh": 159,
+      "booking_done": 42
+    }
+  },
+  "leads_by_source": {
+    "combined": {
+      "facebook": 9076,
+      "walk_in": 2588,
+      "direct": 1366,
+      "instagram": 753,
+      "broker": 591,
+      "housing_com": 497,
+      "whatsapp": 394,
+      "squrefit_page": 215,
+      "hoarding": 194,
+      "old_members": 157,
+      "social_media": 74,
+      "member_referral": 66,
+      "on_site_hoarding": 50,
+      "leaflet": 39,
+      "partner_referral": 35,
+      "launch_event": 19,
+      "website": 12,
+      "other": 8,
+      "referral": 5
+    },
+    "master_sheet": {
+      "facebook": 5363,
+      "walk_in": 1628,
+      "instagram": 753,
+      "housing_com": 497,
+      "broker": 393,
+      "hoarding": 162,
+      "leaflet": 27,
+      "partner_referral": 16,
+      "member_referral": 8,
+      "whatsapp": 8,
+      "other": 4,
+      "website": 3
+    },
+    "myco": {
+      "facebook": 2254,
+      "direct": 1283,
+      "walk_in": 247,
+      "whatsapp": 199,
+      "broker": 98,
+      "social_media": 74,
+      "old_members": 65,
+      "member_referral": 29,
+      "on_site_hoarding": 27,
+      "launch_event": 19,
+      "hoarding": 17,
+      "partner_referral": 9,
+      "referral": 5,
+      "leaflet": 5,
+      "website": 4,
+      "other": 2
+    },
+    "12_sep_lead": {
+      "facebook": 1459,
+      "walk_in": 713,
+      "squrefit_page": 215,
+      "whatsapp": 187,
+      "broker": 100,
+      "old_members": 92,
+      "direct": 83,
+      "member_referral": 29,
+      "on_site_hoarding": 23,
+      "hoarding": 15,
+      "partner_referral": 10,
+      "leaflet": 7,
+      "website": 5,
+      "other": 2
+    }
+  },
+  "leads_by_project": {
+    "combined": {
+      "felicity": 7490,
+      "skydeck": 5201,
+      "vanam": 2995,
+      "felicity_skydeck": 205,
+      "kinaro": 72,
+      "felicity_skydeck_2": 6,
+      "vanam_felicity": 4
+    },
+    "master_sheet": {
+      "felicity": 5246,
+      "skydeck": 3379,
+      "felicity_skydeck": 157,
+      "kinaro": 72,
+      "vanam": 8
+    },
+    "myco": {
+      "felicity": 1941,
+      "vanam": 1365,
+      "skydeck": 814,
+      "felicity_skydeck": 48,
+      "felicity_skydeck_2": 6,
+      "vanam_felicity": 4
+    },
+    "12_sep_lead": {
+      "vanam": 1622,
+      "skydeck": 1008,
+      "felicity": 303
+    }
+  },
+  "leads_by_assigned_user": {
+    "combined": {
+      "Dhanashri Meshram": 7490,
+      "Ravi Patel": 5201,
+      "Mayur Patel": 2995,
+      "Riya Gandhi": 453
+    },
+    "master_sheet": {
+      "Dhanashri Meshram": 5246,
+      "Ravi Patel": 3379,
+      "Riya Gandhi": 229,
+      "Mayur Patel": 8
+    },
+    "myco": {
+      "Dhanashri Meshram": 1941,
+      "Mayur Patel": 1365,
+      "Ravi Patel": 814,
+      "Riya Gandhi": 217
+    },
+    "12_sep_lead": {
+      "Mayur Patel": 1622,
+      "Ravi Patel": 1008,
+      "Dhanashri Meshram": 303,
+      "Riya Gandhi": 7
+    }
+  },
+  "leads_by_legacy_owner": {
+    "combined": {
+      "Riya Gandhi": 9928,
+      "Mayur Patel": 2222,
+      "Dhanashri Meshram": 1617,
+      "Harnish Lalluwadia": 1172,
+      "Ravi Patel": 1005,
+      "Harnish Gajjar": 137,
+      "Sagar Moradia": 1
+    },
+    "master_sheet": {
+      "Riya Gandhi": 6677,
+      "Harnish Lalluwadia": 1172,
+      "Dhanashri Meshram": 663,
+      "Mayur Patel": 295
+    },
+    "myco": {
+      "Riya Gandhi": 3133,
+      "Dhanashri Meshram": 693,
+      "Mayur Patel": 374,
+      "Harnish Gajjar": 137
+    },
+    "12_sep_lead": {
+      "Mayur Patel": 1553,
+      "Ravi Patel": 1005,
+      "Dhanashri Meshram": 261,
+      "Riya Gandhi": 118,
+      "Sagar Moradia": 1
+    }
+  },
+  "assignment_override": {
+    "rule": "assigned_to_name/assigned_role come only from project_key - Vanam->Mayur Patel (salesperson), SkyDeck->Ravi Patel (salesperson), Felicity->Dhanashri Meshram (salesperson). Every other project_key (none, kinaro, felicity_skydeck, felicity_skydeck_2, vanam_felicity, or any other compound/unmapped value) goes to the telecaller, Riya Gandhi. The source file's own owner column is never consulted for this and survives only in _legacy / leads_by_legacy_owner above.",
+    "leads_sent_to_telecaller_for_unmapped_project": 453,
+    "by_project_key_sent_to_telecaller": {
+      "felicity_skydeck": 205,
+      "kinaro": 72,
+      "felicity_skydeck_2": 6,
+      "vanam_felicity": 4
+    }
+  },
+  "leads_by_reason": {
+    "not_interested": 4942,
+    "call_unanswered": 2015,
+    "other": 1268,
+    "budget": 1258,
+    "location_issue": 955,
+    "duplicate": 688,
+    "misclick": 556,
+    "booked_elsewhere": 529,
+    "configuration_issue": 417,
+    "choice_unavailable": 361,
+    "not_qualified": 104,
+    "switched_off": 101,
+    "plan_hold_cancel": 96,
+    "general_enquiry": 87,
+    "other_cast": 47,
+    "ready_to_move": 39,
+    "wrong_number": 31,
+    "old_property_sale": 5,
+    "lost_to_broker": 4,
+    "possession_timeline_issue": 2,
+    "vastu": 1,
+    "upcoming_project": 1
+  },
+  "leads_filled_field_counts": {
+    "combined": {
+      "email": 13831,
+      "updated_at": 11802,
+      "last_activity_at": 5155,
+      "last_name": 1727,
+      "project_key": 166,
+      "first_name": 12,
+      "source": 8,
+      "created_at": 1,
+      "stage": 1
+    },
+    "by_file": {
+      "master_sheet": {
+        "email": 8862,
+        "updated_at": 8862,
+        "last_activity_at": 5155,
+        "last_name": 891,
+        "first_name": 12,
+        "source": 4,
+        "created_at": 1
+      },
+      "myco": {
+        "email": 2327,
+        "last_name": 495,
+        "project_key": 159,
+        "source": 2
+      },
+      "12_sep_lead": {
+        "updated_at": 2940,
+        "email": 2642,
+        "last_name": 341,
+        "project_key": 7,
+        "source": 2,
+        "stage": 1
+      }
+    }
+  },
+  "leads_flag_counts": {
+    "combined": {
+      "breaks_unique_mobile_number_project_id": 8083,
+      "mobile_had_non_digit_characters": 4311,
+      "mobile_had_plus_prefix": 4304,
+      "mobile_country_code_91_stripped": 4262,
+      "project_from_company_industry_field": 4178,
+      "source_new_key": 1979,
+      "no_lead_sub_status": 1835,
+      "assigned_to_telecaller_no_project_mapping": 453,
+      "lead_sub_status_ignored_for_stage": 401,
+      "name_contains_digits": 195,
+      "stage_new_value": 171,
+      "no_project": 166,
+      "project_value_names_two_projects": 157,
+      "reason_new_value": 120,
+      "source_sub_value_looks_like_broker": 95,
+      "no_mobile": 94,
+      "has_todo_dated_before_created_at": 88,
+      "broker_without_number": 87,
+      "mobile_had_two_numbers": 78,
+      "broker_source_without_broker_name": 60,
+      "project_value_names_multiple_projects": 58,
+      "mobile_too_long": 39,
+      "broker_named_on_non_broker_source": 30,
+      "mobile_too_short": 23,
+      "mobile_alt_is_main_number_of_rows": 18,
+      "mobile_does_not_start_6_to_9": 14,
+      "no_name": 12,
+      "no_source": 8,
+      "exact_duplicate_of_rows": 8,
+      "has_todo_dated_in_future": 7,
+      "mobile_cell_held_text": 5,
+      "name_is_a_number": 5,
+      "mobile2_column_used_as_alt": 5,
+      "text_in_date_column": 2,
+      "mobile_alt_too_long": 1,
+      "mobile_may_include_country_code_91": 1,
+      "mobile_had_more_than_two_numbers": 1,
+      "no_created_at": 1,
+      "no_stage": 1
+    },
+    "by_file": {
+      "master_sheet": {
+        "breaks_unique_mobile_number_project_id": 2716,
+        "assigned_to_telecaller_no_project_mapping": 229,
+        "project_value_names_two_projects": 157,
+        "has_todo_dated_before_created_at": 88,
+        "mobile_had_two_numbers": 78,
+        "no_mobile": 61,
+        "broker_named_on_non_broker_source": 30,
+        "name_contains_digits": 30,
+        "broker_source_without_broker_name": 24,
+        "mobile_too_short": 23,
+        "broker_without_number": 20,
+        "mobile_alt_is_main_number_of_rows": 18,
+        "no_name": 12,
+        "mobile_too_long": 10,
+        "mobile_does_not_start_6_to_9": 8,
+        "exact_duplicate_of_rows": 8,
+        "mobile_had_non_digit_characters": 7,
+        "has_todo_dated_in_future": 7,
+        "mobile_cell_held_text": 5,
+        "no_source": 4,
+        "text_in_date_column": 2,
+        "mobile_alt_too_long": 1,
+        "mobile_may_include_country_code_91": 1,
+        "name_is_a_number": 1,
+        "mobile_had_more_than_two_numbers": 1,
+        "no_created_at": 1
+      },
+      "myco": {
+        "mobile_had_plus_prefix": 4304,
+        "mobile_had_non_digit_characters": 4304,
+        "mobile_country_code_91_stripped": 4262,
+        "project_from_company_industry_field": 4178,
+        "breaks_unique_mobile_number_project_id": 3419,
+        "source_new_key": 1515,
+        "assigned_to_telecaller_no_project_mapping": 217,
+        "stage_new_value": 171,
+        "no_project": 159,
+        "name_contains_digits": 103,
+        "source_sub_value_looks_like_broker": 95,
+        "project_value_names_multiple_projects": 58,
+        "no_mobile": 33,
+        "mobile_too_long": 28,
+        "mobile_does_not_start_6_to_9": 4,
+        "broker_source_without_broker_name": 3,
+        "name_is_a_number": 3,
+        "no_source": 2
+      },
+      "12_sep_lead": {
+        "breaks_unique_mobile_number_project_id": 1948,
+        "no_lead_sub_status": 1835,
+        "source_new_key": 464,
+        "lead_sub_status_ignored_for_stage": 401,
+        "reason_new_value": 120,
+        "broker_without_number": 67,
+        "name_contains_digits": 62,
+        "broker_source_without_broker_name": 33,
+        "no_project": 7,
+        "assigned_to_telecaller_no_project_mapping": 7,
+        "mobile2_column_used_as_alt": 5,
+        "no_source": 2,
+        "mobile_does_not_start_6_to_9": 2,
+        "no_stage": 1,
+        "name_is_a_number": 1,
+        "mobile_too_long": 1
+      }
+    }
+  },
+  "duplicates": {
+    "groups": 3803,
+    "rows_involved": 9379,
+    "largest_group": 14,
+    "within_single_file_groups": 491,
+    "cross_file_groups": 3312,
+    "rows_involved_cross_file": 8247,
+    "leads_with_no_mobile_excluded_from_grouping": 94,
+    "groups_with_same_project_more_than_once": 3415,
+    "leads_breaking_unique_mobile_project": 8083
+  },
+  "myco_new_status_values_not_named_in_brief": {
+    "Lost- Vastu": [4338],
+    "Lost-Old Property Sale": [736, 2559, 2560],
+    "Lost-Wrong Numbers": [109, 584, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997]
+  },
+  "csv_lead_sub_status_unmapped": {},
+  "csv_distinct_sub_sources_listed": 51,
+  "pending_follow_ups": {
+    "created_this_pass": 0,
+    "open_leads_with_no_pending_follow_up": 755,
+    "open_stages_counted": ["connected", "fresh", "in_discussion", "not_connected", "site_visit_done", "site_visit_scheduled"],
+    "proposal": "No pending to-do is created for any of these in this pass (per the brief - it would dump hundreds of tasks dated today onto the follow-ups page on day one). Each is instead flagged at import time via lead_import_records.awaiting_follow_up = true (already scaffolded in that table's migration), so the admin can list them with a dedicated command/flag - e.g. `import:legacy --awaiting` - and schedule real follow-ups deliberately, rather than the seeder inventing dates."
+  },
+  "guesses": [
+    {
+      "what": "name split (Lead Name / client_name)",
+      "value_used": "same rule as master-data/process_master_data.py: 1 word -> first only; 2 -> first+last; 3 -> first+middle+last; 4+ -> all but the last two words in first_name, then middle, then last",
+      "why": "Reused rather than re-decided, so a name is split the same way whichever file it came from"
+    },
+    {
+      "what": "mobile country-code stripping (MYCO '+91XXXXXXXXXX', CSV any '+' prefix)",
+      "value_used": "a leading '+' is removed, and a resulting 12-digit number starting '91' has that '91' removed too, leaving the bare 10 digits. Every strip is flagged (mobile_had_plus_prefix / mobile_country_code_91_stripped). The original text is untouched in _legacy",
+      "why": "The mobile_number migration's own comment says stored numbers are 'the bare 10 digits' and config('crm.country_code') adds +91 back for the tel:/wa.me links - so this matches how the live app already stores every other lead's number, not a change to the phone number itself"
+    },
+    {
+      "what": "MYCO project column",
+      "value_used": "'Company Industry' read as the project (Felicity / Vanam / SkyDeck / compound values), flagged project_from_company_industry_field on every row it fills",
+      "why": "MYCO has no column named Project, but every value in Company Industry is one of our own project names or a slash-joined pair/triple of them - clearly a repurposed field, not company data. Confirm before the seeder runs"
+    },
+    {
+      "what": "MYCO/CSV compound project values ('Felicity/SkyDeck', 'Vanam/ Felicity', 'वनम् / Felicity / SkyDeck')",
+      "value_used": "kept as their own project_key, never forced into one of the named projects - 'Felicity/SkyDeck' reuses master-sheet's existing felicity_skydeck key; the two- and three-way values MYCO adds get their own new keys (vanam_felicity, felicity_skydeck_2 for the Gujarati/English mixed one)",
+      "why": "A lead has one project_id; master-sheet already established this precedent for 'Felicity/SkyDeck' rather than guessing which single project the lead meant"
+    },
+    {
+      "what": "CSV/MYCO stage: sub-status only used for Lost's reason",
+      "value_used": "Won -> booking_done, Open -> fresh, Qualified -> in_discussion, Lost -> lost, exactly as briefed. A sub-status on a non-Lost row (e.g. Open+'SV Done', Qualified+'SV Scheduled') is NOT read into a finer stage - flagged lead_sub_status_ignored_for_stage - kept in _legacy so nothing is lost",
+      "why": "The brief's mapping is literal; a richer reading (e.g. Qualified+SV Done -> site_visit_done) would be a second, undirected guess stacked on the first"
+    },
+    {
+      "what": "broker extraction from a sub-source cell",
+      "value_used": "under a 'Channel Partner'/'Channel Parner' parent, a sub-source with a 9+ digit run is split into a broker name and phone (extract_name_phone); a personal name with no phone digits is still treated as a broker (name only, phone null, flagged broker_without_number)",
+      "why": "The brief said 'two' such MYCO sub-sources; the sheet actually has 57 distinct name+phone sub-source values (95 rows) - all extracted the same way, not just two, and every one flagged source_sub_value_looks_like_broker so you can check the split"
+    },
+    {
+      "what": "'Squrefit Page' (215 CSV rows, Social Media)",
+      "value_used": "new source key squrefit_page, not merged into facebook and not treated as a broker",
+      "why": "Reads as a Facebook/social campaign page name - the brief named this exact value as ambiguous ('Squrefit Page') - your call"
+    },
+    {
+      "what": "typo'd parent source values ('Refferral', 'Channel Parner')",
+      "value_used": "normalized to the same keys as the correctly-spelled versions (referral, broker); the original spelling is kept in source_value/lead_source",
+      "why": "Plainly the same word misspelled in the export, not a different source"
+    },
+    {
+      "what": "duplicate_rank tie-break across files",
+      "value_used": "newest created_at first; a tie is broken by which row sits later in the file-concatenation order master_sheet -> myco -> 12_sep_lead (see duplicates.json.tie_break_rule)",
+      "why": "The brief says 'the later source row', which is unambiguous inside one file (master-sheet used its own row order) but not across three - this is one explicit, documented choice, not a silent one"
+    },
+    {
+      "what": "12_sep_lead updated_at",
+      "value_used": "= created_at (filled, flagged)",
+      "why": "The CSV has no separate updated_at column, unlike MYCO which does"
+    },
+    {
+      "what": "12_sep_lead external_id",
+      "value_used": "the CSV's own 'id' column",
+      "why": "leads.external_id is nullable and otherwise unused by this file; the id is a real, given value, not invented"
+    },
+    {
+      "what": "CSV created_at seconds",
+      "value_used": "always :00 - the source format is 'DD-MM-YYYY HH:MM', no seconds",
+      "why": "No finer information exists to fill in; flagged nowhere since this is the source's own precision, not a blank being filled"
+    },
+    {
+      "what": "owner name matching across files",
+      "value_used": "exact string match only (e.g. 'Riya Gandhi' in one file only merges with 'Riya Gandhi' spelled identically in another) - no fuzzy/nickname matching",
+      "why": "Per the brief: 'Harnish Lalluwadia' and 'Harnish Gajjar' are not assumed to be the same person; the same discipline is applied to every name, not just that pair"
+    },
+    {
+      "what": "project name matching across files",
+      "value_used": "case/whitespace-insensitive match only (e.g. 'Skydeck' merges with 'SkyDeck'); never merged just because two names slug to the same ASCII string",
+      "why": "Needed so the CSV's 'Skydeck' and master-sheet's 'SkyDeck' land on one project, while the Gujarati/English mixed compound value is kept apart from the English-only 'Felicity/SkyDeck' even though both reduce to the same ASCII slug"
+    },
+    {
+      "what": "channel-partner cross-file duplicates (possibly_same_as)",
+      "value_used": "every entry from every origin is cross-checked by name_key and by shared phone/alt_phone, listed in possibly_same_as - never auto-merged into one row",
+      "why": "Same policy master-sheet's own channel_partners.json already used; a wrong auto-merge attributes a broker's business to someone who never brought it in"
+    },
+    {
+      "what": "assignment for a project not in the Vanam/SkyDeck/Felicity list (Kinaro, and any Felicity/SkyDeck-style compound value)",
+      "value_used": "sent to the telecaller, Riya Gandhi, flagged assigned_to_telecaller_no_project_mapping - see report.json's assignment_override.by_project_key_sent_to_telecaller for the exact breakdown (kinaro, felicity_skydeck, felicity_skydeck_2, vanam_felicity, and no_project)",
+      "why": "None of these names one single project, so there is no one salesperson to hand it to; the telecaller is the only remaining fallback that does not guess which of two projects a compound lead really meant"
+    },
+    {
+      "what": "whether an open (non-terminal) lead goes to the telecaller instead of the project salesperson",
+      "value_used": "no - every lead on a mapped project (Vanam/SkyDeck/Felicity) goes to that project's salesperson regardless of stage, open or closed",
+      "why": "Matches the brief's own stated view: these are historical leads and most are already closed, so splitting live/open leads to the telecaller would add a distinction the source data was never organized around. Flag this back if a different split is actually wanted."
+    }
+  ],
+  "warnings": [
+    "unique(mobile_number, project_id): merging all three files raises the leads breaking this constraint from 1,068 (master-sheet checked alone) to 8083 of 16045 leads with a mobile - mostly the same client re-entered into a later system for the same project. The seeder needs a group/absorb strategy across ALL THREE files together (same mobile + same project_key = one lead, newest survives), not just within one file - see duplicates.json.",
+    "MYCO is 100% Lost or Not Qualified (4,337 of 4,337 rows) - the file has no fresh/open/won lead at all. Confirm this is expected before treating every MYCO lead as terminal.",
+    "Lost reasons: of the 22 keys in lost_reasons.json, only 13 (budget, not_interested, call_unanswered, other, location_issue, duplicate, configuration_issue, booked_elsewhere, choice_unavailable, switched_off, general_enquiry, misclick, ready_to_move) are already in config('crm.lost_reasons'); the other 9 must be added there before an imported lost lead can be re-saved (LeadRequest/CompleteTodoRequest validate `reason` against that list).",
+    "Sources: of the 19 proposed keys, 12 are not yet in config('crm.sources') - see sources.json status=\"new\" rows, largest by lead count: direct (1,366), squrefit_page (215), old_members (157), social_media (74), on_site_hoarding (50).",
+    "Stages: 5 new stage-level values (not existing stages, but new Lost sub-reasons/statuses) found beyond the brief's own list - 3 in MYCO were not named in the brief at all (Lost-Wrong Numbers, Lost-Old Property Sale, Lost- Vastu) - see myco_new_status_values_not_named_in_brief above and stages.json rows with \"new\": true.",
+    "channel_partners.json's possibly_same_as turned up real cross-file phone sharing worth a human look, not just spelling variants - e.g. MYCO's 'Smit Thakkar' (phone 7016906788) shares that number with master-sheet's 'Shailesh Thakkar' AND 'Shilesh Thakkar' (three different names, one phone). Nothing was auto-merged.",
+    "12_sep_lead: 1,835 of 2,538 Lost rows (72%) have no lead_sub_status at all - stage is `lost` with reason left null and the row flagged no_lead_sub_status, per the brief.",
+    "This file's own leads.json does not yet enforce unique(mobile_number, project_id) or any other DB constraint - those are exactly what the group/absorb step in the next seeder (mirroring LegacyImportPlan::groupRows for master-sheet alone) needs to resolve across all three files."
+  ]
+}

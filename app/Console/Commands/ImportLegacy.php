@@ -11,7 +11,8 @@ use Illuminate\Support\Str;
 use Throwable;
 
 /**
- * Seeds the Master Sheet, as restructured in master-data/db/, into the CRM.
+ * Seeds the three merged legacy sources (Master Sheet, MYCO, 12-Sep-Lead),
+ * as restructured in old-data/, into the CRM.
  *
  * Plan in memory (LegacyImportPlan), check against the database
  * (LegacyImporter::preflight), then write in chunks through the query builder
@@ -24,19 +25,29 @@ use Throwable;
  * after.
  *
  * Idempotent: every source row is recorded in lead_import_records under a
- * unique (source_file, source_row), and a second run skips whatever is there.
+ * unique (source_file, source_row), and every to-do in todo_import_records
+ * under a unique (source_file, source_row, source_column). A second run
+ * finds every one of those already there and writes nothing new.
+ *
+ * --dry-run runs every insert for real — reference data, leads, todos, the
+ * whole thing — then rolls all of it back. It is not a simulation with its
+ * own, softer code path: it is the exact same writeReferenceData()/
+ * writeGroups() a real run calls, wrapped in one outer transaction (every
+ * chunk's own transaction nests inside it as a savepoint) that is always
+ * rolled back at the end. Real unique-index and foreign-key constraints are
+ * exercised, not guessed at; nothing lands because nothing is ever committed.
  */
 class ImportLegacy extends Command
 {
     protected $signature = 'import:legacy
-                            {--dry-run : Validate everything and report, writing nothing}
+                            {--dry-run : Run every insert for real inside a transaction, then roll it all back}
                             {--fresh : Delete the leads, todos and records a previous run imported, first}
                             {--force : With --fresh, delete even if those leads have been worked since}
                             {--awaiting : List imported open leads that still have no pending follow-up}
-                            {--path=master-data/db : Directory holding the restructured JSON}
+                            {--path=old-data : Directory holding the restructured JSON}
                             {--chunk=250 : Leads (with their absorbed rows) per transaction}';
 
-    protected $description = 'Import the legacy Master Sheet leads from master-data/db/';
+    protected $description = 'Import the merged legacy leads (Master Sheet, MYCO, 12-Sep-Lead) from old-data/';
 
     public function handle(): int
     {
@@ -89,26 +100,27 @@ class ImportLegacy extends Command
         }
 
         if ($dryRun) {
+            // a dry run rolls everything back at the end regardless, so a
+            // paused-scheduler blocker cannot corrupt anything mid-flight —
+            // it is reported, not refused
             $this->section('Before the real run');
             $preflight['blockers'] === []
                 ? $this->info('  Nothing — the real run can go ahead.')
                 : collect($preflight['blockers'])->each(fn ($b) => $this->warn("  - {$b}"));
-            $this->newLine();
-            $this->info('Dry run complete. Nothing was written.');
-
-            return self::SUCCESS;
-        }
-
-        if ($preflight['blockers'] !== []) {
+        } elseif ($preflight['blockers'] !== []) {
             return $this->refuse($preflight['blockers']);
         }
 
-        return $this->write($plan, $importer, $fresh !== null, $today);
+        return $this->write($plan, $importer, $fresh !== null, $today, $dryRun);
     }
 
-    private function write(LegacyImportPlan $plan, LegacyImporter $importer, bool $fresh, string $today): int
+    private function write(LegacyImportPlan $plan, LegacyImporter $importer, bool $fresh, string $today, bool $dryRun): int
     {
         $jobsBefore = DB::table('jobs')->count();
+
+        if ($dryRun) {
+            DB::beginTransaction();
+        }
 
         try {
             if ($fresh) {
@@ -118,8 +130,10 @@ class ImportLegacy extends Command
             }
 
             $reference = $importer->writeReferenceData();
-            $this->section('Reference data written');
-            $this->pairs($reference);
+            $this->section('Reference data written (created / skipped as existing / failed)');
+            foreach ($reference as $table => $counts) {
+                $this->reportTable(ucfirst($table), $counts);
+            }
 
             $this->section('Leads');
             $bar = $this->output->createProgressBar(count($plan->groups));
@@ -132,22 +146,32 @@ class ImportLegacy extends Command
             $bar->finish();
             $this->newLine(2);
         } catch (Throwable $e) {
+            if ($dryRun) {
+                DB::rollBack();
+            }
             $this->newLine();
             $this->error('Import stopped: '.$e->getMessage());
-            $this->warn('Every finished chunk is committed; the failing chunk was rolled back. Re-running skips what is in.');
-            $this->remindScheduler();
+            $this->warn($dryRun
+                ? 'Dry run rolled back entirely — this is exactly what a real run would hit at the same point.'
+                : 'Every finished chunk is committed; the failing chunk was rolled back. Re-running skips what is in.');
+            if (! $dryRun) {
+                $this->remindScheduler();
+            }
 
             return self::FAILURE;
         }
 
+        $this->section('Leads (created + absorbed + skipped as existing + failed = source count)');
+        $this->reportTable('Leads', $stats['leads'], extra: ['absorbed' => $stats['leads']['absorbed']]);
+        $this->section('Todos (created + skipped as existing + failed = source count)');
+        $this->reportTable('Todos', $stats['todos']);
         $this->pairs([
-            'Leads created' => $stats['leads'],
-            'Rows absorbed into them' => $stats['absorbed'],
-            'Todos created' => $stats['todos'],
-            'Lead groups already imported, skipped' => $stats['skipped_groups'],
             'Queued jobs added during the import' => DB::table('jobs')->count() - $jobsBefore,
         ]);
 
+        // reads inside the still-open transaction see every row just written,
+        // committed or not — for a dry run this is the real, uncommitted
+        // state, one statement before it is all undone
         $verify = LegacyImporter::verify($today, CrmTaxonomy::terminalStages());
         $this->section('Verification');
         $this->pairs([
@@ -166,6 +190,15 @@ class ImportLegacy extends Command
         foreach (['by_stage' => 'Stage', 'by_source' => 'Source', 'by_project' => 'Project', 'by_user' => 'Assigned to'] as $key => $label) {
             $this->section("Imported leads by {$label}");
             $this->pairs($verify[$key]);
+        }
+
+        if ($dryRun) {
+            DB::rollBack();
+            $this->newLine();
+            $this->line('<options=bold>DRY RUN rolled back — nothing written.</>');
+            $this->line('Every row above was really inserted against real constraints inside a transaction, then undone; the numbers are exactly what a real run would produce.');
+
+            return self::SUCCESS;
         }
 
         $this->remindScheduler();
@@ -209,7 +242,6 @@ class ImportLegacy extends Command
                 .((count($plan->groups) + $absorbed) === $plan->inputRows ? '  ✓' : '  ✗'),
             'Lead groups already imported (will be skipped)' => $preflight['groups_already_imported'],
             'Leads with no mobile (stored as null)' => count(array_filter(array_column($leads, 'mobile_number'), 'is_null')),
-            'Leads with no assigned user (to the admin)' => count(array_filter($leads, fn ($l) => $l['owner_name'] === LegacyImportPlan::ADMIN)),
             'Leads with no project (to "Unassigned")' => count(array_filter($leads, fn ($l) => $l['project_key'] === LegacyImportPlan::UNASSIGNED_PROJECT_KEY)),
             'Leads linked to a channel partner' => count(array_filter(array_column($leads, 'partner_name_key'))),
         ]);
@@ -260,9 +292,40 @@ class ImportLegacy extends Command
             'Completed todos dated after today (kept as written)' => $flags['todo:dated_in_the_future'] ?? 0,
         ]);
 
-        if ($preflight['warnings'] !== [] || $plan->warnings !== []) {
+        if ($preflight['warnings'] !== []) {
             $this->section('Warnings');
-            collect(array_merge($plan->warnings, $preflight['warnings']))->each(fn ($w) => $this->warn("  - {$w}"));
+            collect($preflight['warnings'])->each(fn ($w) => $this->warn("  - {$w}"));
+        }
+    }
+
+    /**
+     * Created / skipped as existing / failed against the source count, per
+     * the brief: the three (four, for leads — see writeGroups) numbers must
+     * sum to it, and if they do not this says so instead of staying quiet.
+     *
+     * @param  array{created: int, skipped: int, failed: int, source_count: int}  $counts
+     * @param  array<string, int>  $extra  additional named buckets (e.g. leads' "absorbed") that also count toward source_count
+     */
+    private function reportTable(string $label, array $counts, array $extra = []): void
+    {
+        $sum = $counts['created'] + $counts['skipped'] + $counts['failed'] + array_sum($extra);
+        $ok = $sum === $counts['source_count'];
+
+        $pairs = [
+            "{$label} created" => $counts['created'],
+        ];
+        foreach ($extra as $name => $value) {
+            $pairs["{$label} {$name}"] = $value;
+        }
+        $pairs["{$label} skipped as existing"] = $counts['skipped'];
+        $pairs["{$label} failed"] = $counts['failed'];
+        $pairs["{$label} source count"] = $counts['source_count'];
+        $pairs["{$label} accounted for"] = "{$sum} / {$counts['source_count']}".($ok ? '  ✓' : '  ✗ MISMATCH');
+        $this->pairs($pairs);
+
+        if (! $ok) {
+            $this->error("{$label}: created + skipped + failed".($extra !== [] ? ' + '.implode(' + ', array_keys($extra)) : '')
+                ." = {$sum}, but the source count is {$counts['source_count']}. Investigate before trusting this run.");
         }
     }
 
@@ -279,8 +342,7 @@ class ImportLegacy extends Command
      */
     private function countBy(array $rows, string $key): array
     {
-        return collect($rows)->countBy(fn ($r) => $r[$key] === LegacyImportPlan::ADMIN ? '(admin)' : (string) $r[$key])
-            ->sortDesc()->all();
+        return collect($rows)->countBy(fn ($r) => (string) $r[$key])->sortDesc()->all();
     }
 
     /* ---------------- --awaiting ---------------- */
