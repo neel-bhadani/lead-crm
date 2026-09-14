@@ -114,6 +114,28 @@ return [
         'competitor' => 'Chose competitor',
         'not_serious' => 'Not serious',
         'no_response' => 'No response',
+
+        /*
+         | The reasons the legacy Master Sheet recorded, from its "Lost-…"
+         | statuses. Added for `import:legacy`: LeadRequest and
+         | CompleteTodoRequest validate `reason` against these keys, so an
+         | imported lost lead carrying one that is not here could never be
+         | saved again. `location_issue` sits beside `location` rather than
+         | replacing it — which one to keep is the client's call, not the
+         | import's.
+         */
+        'not_interested' => 'Not interested',
+        'call_unanswered' => 'Call unanswered',
+        'other' => 'Other',
+        'location_issue' => 'Location issue',
+        'duplicate' => 'Duplicate',
+        'configuration_issue' => 'Configuration issue',
+        'booked_elsewhere' => 'Booked elsewhere',
+        'choice_unavailable' => 'Choice not available',
+        'switched_off' => 'Switched off',
+        'general_enquiry' => 'General enquiry',
+        'misclick' => 'Misclick',
+        'ready_to_move' => 'Wants ready to move',
     ],
 
     'todo_types' => [
