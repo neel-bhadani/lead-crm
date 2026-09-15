@@ -49,10 +49,23 @@ use Illuminate\Support\Facades\DB;
  * actor for the duration, so the to-do it writes has `created_by = null`. The
  * admin who wrote the rule three weeks ago did not make this call, and a
  * history that says they did is a history that gets somebody blamed.
+ *
+ * ---------------------------------------------------------------------------
+ * The activity timeline is written from here too, inside the same transaction.
+ * ---------------------------------------------------------------------------
+ *
+ * Every public operation below records what it did through
+ * LeadActivityRecorder, as one head row followed by the rows for what it
+ * did along the way. Recording changes nothing about the operation itself: it
+ * reads what the operation already decided and writes it down, and it rolls
+ * back with everything else if the operation fails.
  */
 class LeadFollowUpService
 {
-    public function __construct(private LeadAssignmentService $assignment) {}
+    public function __construct(
+        private LeadAssignmentService $assignment,
+        private LeadActivityRecorder $activities,
+    ) {}
 
     /**
      * Triggers waiting for the current operation to commit.
@@ -84,6 +97,9 @@ class LeadFollowUpService
         ?string $remarks = null
     ): void {
         $this->operation(function () use ($lead, $when, $type, $remarks) {
+            // first, before the history row below — see LeadActivityRecorder
+            $this->activities->created($lead);
+
             /*
              | Added at anything but `fresh` — a backfill. Someone is typing in
              | a lead that has already been called, already visited, already
@@ -110,7 +126,11 @@ class LeadFollowUpService
             }
 
             if ($when && ! $lead->isTerminal()) {
-                $this->createTodo($lead, $when, $type, $remarks);
+                $this->activities->followUp(
+                    $this->createTodo($lead, $when, $type, $remarks),
+                    $this->actorId(),
+                    onItsOwn: false,
+                );
             }
 
             /*
@@ -147,6 +167,10 @@ class LeadFollowUpService
 
             $lead = Lead::whereKey($todo->lead_id)->lockForUpdate()->firstOrFail();
 
+            // before the to-do closes and the stage moves: the lead still
+            // holds the stage it is leaving
+            $this->activities->followUpCompleting($lead, $todo, $this->actorId(), $stage, $remarks);
+
             $todo->update([
                 'status' => 'completed',
                 'remarks' => $remarks,
@@ -156,6 +180,7 @@ class LeadFollowUpService
             ]);
 
             $this->applyStage($lead, $stage, $extra);
+            $this->activities->outcome($lead, $this->actorId());
 
             $outcome = $this->schedule($lead, $stage, $nextAt, $nextType, $nextRemarks, $todo->id);
 
@@ -182,16 +207,19 @@ class LeadFollowUpService
         return $this->operation(function () use ($lead, $stage, $extra, $nextAt, $nextType, $nextRemarks, $historyRemark) {
             $lead = Lead::whereKey($lead->id)->lockForUpdate()->firstOrFail();
 
+            $remark = $historyRemark ?? 'Stage changed from the lead form.';
+
+            // before the stage moves: the lead still holds the stage it is
+            // leaving, and this row has to precede the history row below
+            $this->activities->stageChanging($lead, $this->actorId(), $stage, $remark);
+
             $this->applyStage($lead, $stage, $extra);
+            $this->activities->outcome($lead, $this->actorId());
 
             // complete() records its transition on the to-do being closed; this
             // path has no such to-do, so without this the change leaves no
             // history at all
-            $this->recordStageChange(
-                $lead,
-                $stage,
-                $historyRemark ?? 'Stage changed from the lead form.'
-            );
+            $this->recordStageChange($lead, $stage, $remark);
 
             $outcome = $this->schedule($lead, $stage, $nextAt, $nextType, $nextRemarks);
 
@@ -225,7 +253,16 @@ class LeadFollowUpService
             return false;
         }
 
-        return (bool) $this->operation(function () use ($lead, $to) {
+        /*
+         | Already inside another operation means handover() called this: the
+         | lead is moving desks because of the stage it just reached, and the
+         | timeline shows that as part of that stage change. Called from the top
+         | — automation's assign actions — it is a reassignment in its own
+         | right. Read before operation() raises the depth for this call.
+         */
+        $isHandover = $this->operationDepth > 0;
+
+        return (bool) $this->operation(function () use ($lead, $to, $isHandover) {
             /*
              | Lock the row, then write the instance the CALLER is holding.
              |
@@ -236,12 +273,16 @@ class LeadFollowUpService
              | lead would book its site visit onto the telecaller who just gave
              | it away.
              */
-            Lead::whereKey($lead->id)->lockForUpdate()->firstOrFail();
+            $locked = Lead::whereKey($lead->id)->lockForUpdate()->firstOrFail();
 
             $lead->assigned_to = $to->id;
             $lead->assigned_role = $to->role;
             $lead->last_activity_at = now();
             $lead->save();
+
+            // from the locked row: who actually held it, whatever the caller's
+            // copy says
+            $this->activities->reassigned($lead, $this->actorId(), $locked->assigned_to, $to->id, $isHandover);
 
             /*
              | The task goes with the lead. A pending to-do left on the previous
@@ -295,7 +336,11 @@ class LeadFollowUpService
                 ->where('status', 'pending')
                 ->update(['status' => 'cancelled']);
 
-            $this->createTodo($lead, $when, $type, $remarks);
+            $this->activities->followUp(
+                $this->createTodo($lead, $when, $type, $remarks),
+                $this->actorId(),
+                onItsOwn: true,
+            );
 
             return true;
         });
@@ -486,7 +531,11 @@ class LeadFollowUpService
             return $outcome;
         }
 
-        $this->createTodo($lead, $when, $type, $remarks, $fromTodo);
+        $this->activities->followUp(
+            $this->createTodo($lead, $when, $type, $remarks, $fromTodo),
+            $this->actorId(),
+            onItsOwn: false,
+        );
 
         return $outcome;
     }
@@ -537,8 +586,8 @@ class LeadFollowUpService
         ?string $type,
         ?string $remarks,
         ?int $fromTodo = null
-    ): void {
-        Todo::create([
+    ): Todo {
+        return Todo::create([
             'lead_id' => $lead->id,
             'assigned_to' => $lead->assigned_to,
             'created_by' => $this->actorId(),
