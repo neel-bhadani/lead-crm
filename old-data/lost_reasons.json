@@ -1,0 +1,183 @@
+[
+  {
+    "key": "not_interested",
+    "count": 4942,
+    "in_config": true,
+    "new": false,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "source_values": ["12_sep_lead:Lost / Not Interested", "master_sheet:Lost-Not Interested", "myco:Lost-Not Interested"]
+  },
+  {
+    "key": "call_unanswered",
+    "count": 2015,
+    "in_config": true,
+    "new": false,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "source_values": ["12_sep_lead:Lost / Call Unanswered", "master_sheet:Lost-Call Unanswered", "myco:Lost-Call Unanswered"]
+  },
+  {
+    "key": "other",
+    "count": 1268,
+    "in_config": true,
+    "new": false,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "source_values": ["12_sep_lead:Lost / Other", "master_sheet:Lost-Other", "myco:Lost-Other"]
+  },
+  {
+    "key": "budget",
+    "count": 1258,
+    "in_config": true,
+    "new": false,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "source_values": ["12_sep_lead:Lost / Budget Issue", "master_sheet:Lost-Budget Issue", "myco:Lost-Budget Issue"]
+  },
+  {
+    "key": "location_issue",
+    "count": 955,
+    "in_config": true,
+    "new": false,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "source_values": ["12_sep_lead:Lost / Location Issue", "master_sheet:Lost-Location Issue", "myco:Lost-Location Issue"]
+  },
+  {
+    "key": "duplicate",
+    "count": 688,
+    "in_config": true,
+    "new": false,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "source_values": ["12_sep_lead:Lost / Dupalicate", "master_sheet:Lost-Duplicate", "myco:Lost-Duplicate"]
+  },
+  {
+    "key": "misclick",
+    "count": 556,
+    "in_config": true,
+    "new": false,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "source_values": ["12_sep_lead:Lost / Misclick", "master_sheet:Lost-Misclick", "myco:Lost-Misclick"]
+  },
+  {
+    "key": "booked_elsewhere",
+    "count": 529,
+    "in_config": true,
+    "new": false,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "source_values": ["12_sep_lead:Lost / Booked In Other Project", "master_sheet:Lost-Booked In other", "myco:Lost-Booked In other"]
+  },
+  {
+    "key": "configuration_issue",
+    "count": 417,
+    "in_config": true,
+    "new": false,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "source_values": ["12_sep_lead:Lost / Configuration Issue", "master_sheet:Lost-Configuration Issue", "myco:Lost-Configuration Issue"]
+  },
+  {
+    "key": "choice_unavailable",
+    "count": 361,
+    "in_config": true,
+    "new": false,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "source_values": ["12_sep_lead:Lost / Choice Not Available", "master_sheet:Lost-Choice Not Available", "myco:Lost-Choice Not Available"]
+  },
+  {
+    "key": "not_qualified",
+    "count": 104,
+    "in_config": false,
+    "new": true,
+    "source_files": ["myco"],
+    "source_values": ["myco:Not Qualified"]
+  },
+  {
+    "key": "switched_off",
+    "count": 101,
+    "in_config": true,
+    "new": false,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "source_values": ["12_sep_lead:Lost / Switch Off", "master_sheet:Lost-Switch Off", "myco:Lost-Switch Off"]
+  },
+  {
+    "key": "plan_hold_cancel",
+    "count": 96,
+    "in_config": false,
+    "new": true,
+    "source_files": ["12_sep_lead", "myco"],
+    "source_values": ["12_sep_lead:Lost / Plan Hold & Cancel", "myco:Lost - Plan Hold & Cancel"]
+  },
+  {
+    "key": "general_enquiry",
+    "count": 87,
+    "in_config": true,
+    "new": false,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "source_values": ["12_sep_lead:Lost / General Enquiry", "master_sheet:Lost-General Enquiry", "myco:Lost-General Enquiry"]
+  },
+  {
+    "key": "other_cast",
+    "count": 47,
+    "in_config": false,
+    "new": true,
+    "source_files": ["12_sep_lead"],
+    "source_values": ["12_sep_lead:Lost / Other Cast"]
+  },
+  {
+    "key": "ready_to_move",
+    "count": 39,
+    "in_config": true,
+    "new": false,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "source_values": [
+      "12_sep_lead:Lost / Ready To Move In",
+      "master_sheet:Lost-Ready To Move In",
+      "master_sheet:Lost-Ready to move",
+      "myco:Lost-Ready To Move In"
+    ]
+  },
+  {
+    "key": "wrong_number",
+    "count": 31,
+    "in_config": false,
+    "new": true,
+    "source_files": ["12_sep_lead", "myco"],
+    "source_values": ["12_sep_lead:Lost / Invalid Number / Wrong Number", "myco:Lost-Wrong Numbers"]
+  },
+  {
+    "key": "old_property_sale",
+    "count": 5,
+    "in_config": false,
+    "new": true,
+    "source_files": ["12_sep_lead", "myco"],
+    "source_values": ["12_sep_lead:Lost / Old Property Sale", "myco:Lost-Old Property Sale"]
+  },
+  {
+    "key": "lost_to_broker",
+    "count": 4,
+    "in_config": false,
+    "new": true,
+    "source_files": ["12_sep_lead"],
+    "source_values": ["12_sep_lead:Lost / Broker"]
+  },
+  {
+    "key": "possession_timeline_issue",
+    "count": 2,
+    "in_config": false,
+    "new": true,
+    "source_files": ["12_sep_lead"],
+    "source_values": ["12_sep_lead:Lost / Possession Timeline"]
+  },
+  {
+    "key": "vastu",
+    "count": 1,
+    "in_config": false,
+    "new": true,
+    "source_files": ["myco"],
+    "source_values": ["myco:Lost- Vastu"]
+  },
+  {
+    "key": "upcoming_project",
+    "count": 1,
+    "in_config": false,
+    "new": true,
+    "source_files": ["12_sep_lead"],
+    "source_values": ["12_sep_lead:Lost / Upcomming Project"]
+  }
+]
