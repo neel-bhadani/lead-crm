@@ -1,0 +1,37 @@
+# Production image for Laravel 13.29.0 / PHP 8.4.
+FROM composer:2 AS composer-dependencies
+WORKDIR /var/www/html
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --no-interaction --prefer-dist --no-progress --optimize-autoloader
+
+FROM node:24-bookworm-slim AS frontend-assets
+WORKDIR /var/www/html
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY vite.config.js .
+COPY resources ./resources
+COPY public ./public
+RUN npm run build
+
+FROM php:8.4-fpm-bookworm AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libonig-dev libxml2-dev \
+    && docker-php-ext-install -j"$(nproc)" pdo_mysql mbstring dom xml xmlwriter pcntl opcache \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+COPY docker/php/production.ini /usr/local/etc/php/conf.d/zz-production.ini
+WORKDIR /var/www/html
+COPY --from=composer-dependencies /var/www/html/vendor ./vendor
+COPY --from=frontend-assets /var/www/html/public/build ./public/build
+COPY . .
+RUN rm -f public/hot \
+    && mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs storage/app/public bootstrap/cache \
+    && chown -R www-data:www-data storage bootstrap/cache \
+    && ln -s storage/app/public public/storage
+USER www-data
+CMD ["php-fpm", "-F"]
+
+FROM nginx:stable-alpine AS web
+COPY docker/nginx/production.conf /etc/nginx/conf.d/default.conf
+COPY --from=runtime /var/www/html/public /var/www/html/public
+WORKDIR /var/www/html

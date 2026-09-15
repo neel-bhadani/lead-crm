@@ -1,0 +1,86 @@
+name: lead-crm-prod
+
+x-production-env: &production-env
+  env_file:
+    - ${PRODUCTION_ENV_FILE:-.env}
+  environment:
+    APP_ENV: production
+    APP_DEBUG: "false"
+    APP_URL: ${APP_URL:-http://localhost:8081}
+    DB_CONNECTION: ${DB_CONNECTION:-mysql}
+    DB_HOST: ${DB_HOST:-host.docker.internal}
+    QUEUE_CONNECTION: ${QUEUE_CONNECTION:-database}
+    CACHE_STORE: ${CACHE_STORE:-database}
+    SESSION_DRIVER: ${SESSION_DRIVER:-database}
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      target: runtime
+    <<: *production-env
+    restart: unless-stopped
+    volumes:
+      - production_storage:/var/www/html/storage
+      - production_cache:/var/www/html/bootstrap/cache
+    healthcheck:
+      test: ["CMD-SHELL", "php -r 'exit((int)!file_exists(\"/var/www/html/vendor/autoload.php\"));'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      target: web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:80"
+    volumes:
+      - production_storage:/var/www/html/storage:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  queue:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      target: runtime
+    <<: *production-env
+    restart: unless-stopped
+    command: ["php", "artisan", "queue:work", "--sleep=3", "--tries=3", "--timeout=90"]
+    volumes:
+      - production_storage:/var/www/html/storage
+      - production_cache:/var/www/html/bootstrap/cache
+    depends_on:
+      app:
+        condition: service_healthy
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      target: runtime
+    <<: *production-env
+    restart: unless-stopped
+    command: ["php", "artisan", "schedule:work"]
+    volumes:
+      - production_storage:/var/www/html/storage
+      - production_cache:/var/www/html/bootstrap/cache
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  production_storage:
+  production_cache:
