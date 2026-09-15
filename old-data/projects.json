@@ -1,0 +1,65 @@
+[
+  {
+    "key": "felicity",
+    "name": "Felicity",
+    "alt_spellings_seen": [],
+    "lead_count": 7490,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "_flags": [],
+    "_note": "projects has no key column; the seeder resolves project_key to an id by name"
+  },
+  {
+    "key": "skydeck",
+    "name": "SkyDeck",
+    "alt_spellings_seen": ["Skydeck"],
+    "lead_count": 5201,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "_flags": [],
+    "_note": "projects has no key column; the seeder resolves project_key to an id by name"
+  },
+  {
+    "key": "vanam",
+    "name": "Vanam",
+    "alt_spellings_seen": [],
+    "lead_count": 2995,
+    "source_files": ["12_sep_lead", "master_sheet", "myco"],
+    "_flags": [],
+    "_note": "projects has no key column; the seeder resolves project_key to an id by name"
+  },
+  {
+    "key": "felicity_skydeck",
+    "name": "Felicity/SkyDeck",
+    "alt_spellings_seen": [],
+    "lead_count": 205,
+    "source_files": ["master_sheet", "myco"],
+    "_flags": ["value_names_two_projects"],
+    "_note": "projects has no key column; the seeder resolves project_key to an id by name"
+  },
+  {
+    "key": "kinaro",
+    "name": "Kinaro",
+    "alt_spellings_seen": [],
+    "lead_count": 72,
+    "source_files": ["master_sheet"],
+    "_flags": [],
+    "_note": "projects has no key column; the seeder resolves project_key to an id by name"
+  },
+  {
+    "key": "felicity_skydeck_2",
+    "name": "वनम् / Felicity / SkyDeck",
+    "alt_spellings_seen": [],
+    "lead_count": 6,
+    "source_files": ["myco"],
+    "_flags": ["value_names_two_projects"],
+    "_note": "projects has no key column; the seeder resolves project_key to an id by name"
+  },
+  {
+    "key": "vanam_felicity",
+    "name": "Vanam/ Felicity",
+    "alt_spellings_seen": [],
+    "lead_count": 4,
+    "source_files": ["myco"],
+    "_flags": ["value_names_two_projects"],
+    "_note": "projects has no key column; the seeder resolves project_key to an id by name"
+  }
+]
